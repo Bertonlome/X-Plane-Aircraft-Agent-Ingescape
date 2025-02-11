@@ -11,7 +11,7 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 # =========================================================================
 #
-
+import struct
 import signal
 import getopt
 import time
@@ -20,8 +20,9 @@ from pathlib import Path
 
 from echo import *
 
+refresh_rate = 0.1
 port = 5670
-agent_name = "Aircraft agent"
+agent_name = "Aircraft_agent"
 device = "wlo1"
 verbose = False
 is_interrupted = False
@@ -167,6 +168,20 @@ def get_dref(arg):
         myValueText = f"{rounded_value:.1f}"  # Format with 1 decimal place
         return myValueText
     
+def get_posi(arg):
+    with xpc.XPlaneConnect() as client:
+        #get a dref
+        dref = arg
+        myValue = client.getPOSI(dref)
+        return myValue
+    
+def get_ctrl(arg):
+    with xpc.XPlaneConnect() as client:
+        #get a dref
+        dref = arg
+        myValue = client.getCTRL(dref)
+        return myValue
+    
 def stow_gear():
     with xpc.XPlaneConnect() as client:
         # Stow landing gear using a dataref
@@ -261,25 +276,17 @@ if __name__ == "__main__":
     igs.input_create("Landing_Gear_Toggle", igs.IMPULSION_T, None)
     igs.input_create("Flaps_setting", igs.STRING_T, None)
 
-    igs.output_create("Airspeed", igs.INTEGER_T, None)
-    igs.output_create("Altitude", igs.INTEGER_T, None)
-    igs.output_create("Vertical_Speed", igs.INTEGER_T, None)
-    igs.output_create("Heading", igs.INTEGER_T, None)
-    igs.output_create("Left_Engine_N1%", igs.INTEGER_T, None)
-    igs.output_create("Right_Engine_N1%", igs.INTEGER_T, None)
-    igs.output_create("Flaps_setting", igs.STRING_T, None)
-    igs.output_create("Landing_Gear_Extended", igs.BOOL_T, None)
+    igs.output_create("posi", igs.DATA_T, None)
+    igs.output_create("ctrl", igs.DATA_T, None)
+    igs.output_create("fuelQuantity", igs.DOUBLE_T, None)
+    igs.output_create("groundSpeed", igs.DOUBLE_T, None)
+    igs.output_create("brakingAction", igs.DOUBLE_T, None)
+    igs.output_create("thrustCmd", igs.DOUBLE_T, None)
+    igs.output_create("simTimeSinceStart", igs.DOUBLE_T, None)
 
     igs.observe_input("Landing_Gear_Toggle", impulsion_input_callback, agent)
     igs.observe_input("Flaps_setting", string_input_callback, agent)
 
-    igs.service_init("receive_values", receive_values_callback, agent)
-    igs.service_arg_add("receive_values", "bool", igs.BOOL_T)
-    igs.service_arg_add("receive_values", "Airspeed", igs.INTEGER_T)
-    igs.service_arg_add("receive_values", "double", igs.DOUBLE_T)
-    igs.service_arg_add("receive_values", "string", igs.STRING_T)
-    igs.service_arg_add("receive_values", "data", igs.DATA_T)
-    igs.service_init("send_values", send_values_callback, agent)
 
     igs.log_set_console(True)
     igs.log_set_console_level(igs.LOG_INFO)
@@ -298,32 +305,36 @@ if __name__ == "__main__":
                 print_usage_help()
     else:
         while (not is_interrupted) and igs.is_started():
+            
+            ## def datarefs string
+            groundSpeedDref = "sim/flightmodel/position/groundspeed"
+            thrustDref = "sim/flightmodel/engine/ENGN_thro_use"
+            parkingBrakeDref = "sim/cockpit2/controls/parking_brake_ratio"
+            fuelQuantityRightDref = "sim/cockpit2/fuel/fuel_level_indicated_right"
+            fuelQuantityLeftDref = "sim/cockpit2/fuel/fuel_level_indicated_left"
+            simTimeSinceStartDref = "sim/time/total_flight_time_sec"
+            
+            
             #My main loop
-            newValue = get_dref("sim/cockpit2/gauges/indicators/airspeed_kts_pilot")
-            igs.output_set_int("Airspeed", int(float(newValue)))
-            newValue = get_dref("sim/cockpit2/gauges/indicators/altitude_ft_copilot")
-            igs.output_set_int("Altitude", int(float(newValue)))
-            newValue = get_dref("sim/cockpit2/gauges/indicators/vvi_fpm_pilot")
-            igs.output_set_int("Vertical_Speed", int(float(newValue)))
-            newValue = get_dref("sim/cockpit2/gauges/indicators/compass_heading_deg_mag")
-            igs.output_set_int("Heading", int(float(newValue)))
-            newValue = get_dref("sim/cockpit2/engine/indicators/engine_speed_rpm")
-            igs.output_set_int("Left_Engine_N1%", int(float(newValue)))
-            igs.output_set_int("Right_Engine_N1%", int(float(newValue)))
-            newValue = get_dref("sim/flightmodel/controls/flaprqst")
-            if float(newValue) == 0:
-                igs.output_set_string("Flaps_setting", "UP")
-            elif float(newValue) == 0.5:
-                igs.output_set_string("Flaps_setting", "TO/APR")
-            else:
-                igs.output_set_string("Flaps_setting", "LAND")
-            newValue = get_dref("Mustang/gear_lever")
-            if float(newValue) == 1:
-                igs.output_set_bool("Landing_Gear_Extended", True)
-            else:
-                igs.output_set_bool("Landing_Gear_Extended", False)
+            newValue = get_posi(0)
+            igs.output_set_data("posi", struct.pack("ddddddd", *newValue))
+            newValue = get_ctrl(0)
+            igs.output_set_data("ctrl", struct.pack("ddddddd", *newValue))
+            
+            newValue = get_dref(groundSpeedDref)
+            igs.output_set_double("groundSpeed", float(newValue))
+            newValue = get_dref(thrustDref)
+            igs.output_set_double("thrustCmd", float(newValue))
+            newValue = get_dref(parkingBrakeDref)
+            igs.output_set_double("brakingAction", float(newValue))
+            fuelLeft = get_dref(fuelQuantityLeftDref) 
+            fuelRight = get_dref(fuelQuantityRightDref)
+            newValue = (float(fuelLeft) + float(fuelRight))
+            igs.output_set_double("fuelQuantity", float(newValue))
+            newValue = get_dref(simTimeSinceStartDref)
+            igs.output_set_double("simTimeSinceStart", float(newValue))
 
-            time.sleep(0.1)
+            time.sleep(refresh_rate)
 
     if igs.is_started():
         igs.stop()
