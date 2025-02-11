@@ -333,7 +333,7 @@ if __name__ == "__main__":
             igs.output_set_double("fuelQuantity", float(newValue))
             newValue = get_dref(simTimeSinceStartDref)
             igs.output_set_double("simTimeSinceStart", float(newValue))
-
+            ## just a comments
             time.sleep(refresh_rate)
 
     if igs.is_started():
