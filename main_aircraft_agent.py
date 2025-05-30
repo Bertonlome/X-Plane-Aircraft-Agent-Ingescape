@@ -42,7 +42,7 @@ def get_dref(arg, is_double=False):
         rounded_value = round(myValue[0], 1)
         return rounded_value
 
-refresh_rate = 0.05
+refresh_rate = 0.5
 port = 5670
 agent_name = "Aircraft"
 device = "wlo1"
