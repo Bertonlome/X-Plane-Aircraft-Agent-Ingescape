@@ -50,7 +50,7 @@ bottle_l_discharge_dref = "Mustang/cockpit/bottle_l_arm_b" # 0 is off, 1 is on
 bottle_r_discharge_dref = "Mustang/cockpit/bottle_r_arm_b" # 0 is off, 1 is on
 fuel_boost_l_dref = "Mustang/cockpit/fuel/boost_l" # 0 is off, 1 is on
 fuel_boost_r_dref = "Mustang/cockpit/fuel/boost_r" # 0 is off, 1 is on
-tesk_knob_dref = "Mustang/cockpit/test_knob" # 0 to 11 for each test position
+test_knob_dref = "Mustang/cockpit/test_knob" # 0 to 11 for each test position
 autopilot_heading_set_dref = "sim/cockpit/autopilot/heading" # 0 to 360
 autopilot_state_dref = "sim/cockpit/autopilot/autopilot_state" #need to understand this seems to be an integer that represents the state of the autopilot
 yaw_damper_dref = "sim/cockpit/switches/yaw_damper_on" # 0 is off, 1 is on
@@ -138,13 +138,29 @@ def get_dref(arg, is_double=False):
     try:
         with xpc.XPlaneConnect() as client: 
             #get a dref 
-            dref = arg  
+            dref = arg
             myValue = client.getDREF(dref)  
             rounded_value = round(myValue[0], 1)    
     except Exception as e:
         print(f"Error getting dref {arg}: {e}")
         rounded_value = 0.0  # Default value in case of error
     return rounded_value
+
+def get_drefs(args):
+    try:
+        with xpc.XPlaneConnect() as client:
+            myValues = client.getDREFs(args)
+            rounded_values = []
+            for value in myValues:
+                if isinstance(value, (list, tuple)):
+                    # Take the first element or handle as needed
+                    rounded_values.append(round(value[0], 1) if value else 0.0)
+                else:
+                    rounded_values.append(round(value, 1))
+    except Exception as e:
+        print(f"Error getting drefs {args}: {e}")
+        rounded_values = [0.0] * len(args)
+    return rounded_values
 
 def send_dref(arg, value):
     try:
@@ -245,7 +261,7 @@ igs.input_create("heading_mode", igs.DOUBLE_T, None)  # Mustang/heading
 igs.input_create("autopilot_master", igs.DOUBLE_T, None)  # 0 is off, 1 is FD 2 is AP + FD
 igs.input_create("fuel_boost_l", igs.DOUBLE_T, None)  # 0 is off, 1 is on
 igs.input_create("fuel_boost_r", igs.DOUBLE_T, None)  # 0 is off, 1 is on
-igs.input_create("tesk_knob", igs.DOUBLE_T, None)  # 0 to 11 for each test position
+igs.input_create("test_knob", igs.DOUBLE_T, None)  # 0 to 11 for each test position
 igs.input_create("autopilot_heading_set", igs.DOUBLE_T, None)  # 0 to 360
 igs.input_create("autopilot_state", igs.DOUBLE_T, None)  # need to understand this seems to be an integer that represents the state of the autopilot
 igs.input_create("yaw_damper", igs.DOUBLE_T, None)  # 0 is off, 1 is on
@@ -290,7 +306,7 @@ igs.output_create("heading_mode", igs.DOUBLE_T, None)  # Mustang/heading
 igs.output_create("autopilot_master", igs.DOUBLE_T, None)  # 0 is off, 1 is FD 2 is AP + FD
 igs.output_create("fuel_boost_l", igs.DOUBLE_T, None)  # 0 is off, 1 is on
 igs.output_create("fuel_boost_r", igs.DOUBLE_T, None)  # 0 is off, 1 is on
-igs.output_create("tesk_knob", igs.DOUBLE_T, None)  # 0 to 11 for each test position
+igs.output_create("test_knob", igs.DOUBLE_T, None)  # 0 to 11 for each test position
 igs.output_create("autopilot_heading_set", igs.DOUBLE_T, None)  # 0 to 360
 igs.output_create("autopilot_state", igs.DOUBLE_T, None)  # need to understand this seems to be an integer that represents the state of the autopilot
 igs.output_create("yaw_damper", igs.DOUBLE_T, None)  # 0 is off, 1 is on
@@ -317,7 +333,7 @@ igs.observe_input("heading_mode", double_input_callback, None)  # Mustang/headin
 igs.observe_input("autopilot_master", double_input_callback, None)  # 0 is off, 1 is FD 2 is AP + FD
 igs.observe_input("fuel_boost_l", double_input_callback, None)  # 0 is off, 1 is on
 igs.observe_input("fuel_boost_r", double_input_callback, None)  # 0 is off, 1 is on
-igs.observe_input("tesk_knob", double_input_callback, None)  # 0 to 11 for each test position
+igs.observe_input("test_knob", double_input_callback, None)  # 0 to 11 for each test position
 igs.observe_input("autopilot_heading_set", double_input_callback, None)  # 0 to 360
 igs.observe_input("autopilot_state", double_input_callback, None)  # need to understand this seems to be an integer that represents the state of the autopilot
 igs.observe_input("yaw_damper", double_input_callback, None)  # 0 is off, 1 is on
@@ -340,6 +356,39 @@ def main():
         try:
             while not is_interrupted:
                 time.sleep(refresh_rate)
+                
+                airspeed, vert_speed, park_brake, mustang_l_throttle, mustang_r_throttle, n1_match_bug, n1_percent, slip, engine_fires, generators_off, pax_safety, master_warning, master_caution, flight_director, speed_mode, heading_mode, autopilot_master, fuel_boost_l, fuel_boost_r, test_knob, autopilot_heading_set, autopilot_state, yaw_damper, l_ign_switch, r_ign_switch, l_gen_switch, r_gen_switch, transfer_knob = get_drefs([ias_dref, verticalSpeed_dref, parkBrake_dref, mustang_l_throttle_dref, mustang_r_throttle_dref, n1_match_bug_dref, n1_percent_dref, slip_dref, engine_fires_dref, generators_off_dref, pax_safety_dref, master_warning_dref, master_caution_dref, flight_director_dref, speed_mode_dref, heading_mode_dref, autopilot_master_dref, fuel_boost_l_dref, fuel_boost_r_dref, test_knob_dref, autopilot_heading_set_dref, autopilot_state_dref, yaw_damper_dref, l_ign_switch_dref, r_ign_switch_dref, l_gen_switch_dref, r_gen_switch_dref, transfer_knob_dref])
+                
+                agent.airspeed_o = airspeed
+                agent.vertical_speed_o = vert_speed
+                agent.park_brake_o = park_brake
+                agent.l_throttle_o = mustang_l_throttle
+                agent.r_throttle_o = mustang_r_throttle
+                agent.n1_match_bug_o = n1_match_bug
+                agent.n1_percent_o = n1_percent
+                agent.slip_o = slip
+                agent.engine_fires_o = engine_fires
+                agent.generators_off_o = generators_off
+                agent.pax_safety_o = pax_safety
+                agent.master_warning_o = master_warning
+                agent.master_caution_o = master_caution
+                agent.flight_director_o = flight_director
+                agent.speed_mode_o = speed_mode
+                agent.heading_mode_o = heading_mode
+                agent.autopilot_master_o = autopilot_master
+                agent.fuel_boost_l_o = fuel_boost_l
+                agent.fuel_boost_r_o = fuel_boost_r
+                agent.test_knob_o = test_knob
+                agent.autopilot_heading_set_o = autopilot_heading_set
+                agent.autopilot_state_o = autopilot_state
+                agent.yaw_damper_o = yaw_damper
+                agent.l_ign_switch_o = l_ign_switch
+                agent.r_ign_switch_o = r_ign_switch
+                agent.l_gen_switch_o = l_gen_switch
+                agent.r_gen_switch_o = r_gen_switch
+                agent.transfer_knob_o = transfer_knob
+                
+                """
                 airspeed = get_dref(ias_dref)
                 agent.airspeed_o = airspeed
                 time.sleep(refresh_rate)
@@ -400,8 +449,8 @@ def main():
                 fuel_boost_r = get_dref(fuel_boost_r_dref)
                 agent.fuel_boost_r_o = fuel_boost_r
                 time.sleep(refresh_rate)
-                tesk_knob = get_dref(tesk_knob_dref)
-                agent.tesk_knob_o = tesk_knob
+                test_knob = get_dref(test_knob_dref)
+                agent.test_knob_o = test_knob
                 time.sleep(refresh_rate)
                 autopilot_heading_set = get_dref(autopilot_heading_set_dref)
                 agent.autopilot_heading_set_o = autopilot_heading_set
@@ -426,7 +475,7 @@ def main():
                 time.sleep(refresh_rate)
                 transfer_knob = get_dref(transfer_knob_dref)
                 agent.transfer_knob_o = transfer_knob
-
+                """
                 time.sleep(refresh_rate)
                 pitch, heading, roll, alt, lat, long = get_position()
                 agent.pitch_o = pitch
