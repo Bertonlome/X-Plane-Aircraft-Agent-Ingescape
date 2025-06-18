@@ -352,6 +352,7 @@ signal.signal(signal.SIGINT, signal_handler)
 
 def main():
     global is_interrupted
+    neverDone = True
     while not is_interrupted:
         try:
             while not is_interrupted:
@@ -360,6 +361,16 @@ def main():
                 airspeed, vert_speed, park_brake, mustang_l_throttle, mustang_r_throttle, n1_match_bug, n1_percent, slip, engine_fires, generators_off, pax_safety, master_warning, master_caution, flight_director, speed_mode, heading_mode, autopilot_master, fuel_boost_l, fuel_boost_r, test_knob, autopilot_heading_set, autopilot_state, yaw_damper, l_ign_switch, r_ign_switch, l_gen_switch, r_gen_switch, transfer_knob = get_drefs([ias_dref, verticalSpeed_dref, parkBrake_dref, mustang_l_throttle_dref, mustang_r_throttle_dref, n1_match_bug_dref, n1_percent_dref, slip_dref, engine_fires_dref, generators_off_dref, pax_safety_dref, master_warning_dref, master_caution_dref, flight_director_dref, speed_mode_dref, heading_mode_dref, autopilot_master_dref, fuel_boost_l_dref, fuel_boost_r_dref, test_knob_dref, autopilot_heading_set_dref, autopilot_state_dref, yaw_damper_dref, l_ign_switch_dref, r_ign_switch_dref, l_gen_switch_dref, r_gen_switch_dref, transfer_knob_dref])
                 
                 agent.airspeed_o = airspeed
+                
+                #print(f"{airspeed} and {neverDone}")
+                if airspeed >= 110 and neverDone:
+                    print("Birds incoming ! :)")
+                    send_dref(bird_dref, 2)
+                    agent.outside_event_o = "birds"
+                    neverDone = False
+                elif airspeed == 0.0 and not neverDone:
+                    neverDone = True
+
                 agent.vertical_speed_o = vert_speed
                 agent.park_brake_o = park_brake
                 agent.l_throttle_o = mustang_l_throttle
