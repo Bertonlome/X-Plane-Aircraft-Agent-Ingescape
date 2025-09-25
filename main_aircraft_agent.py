@@ -75,7 +75,7 @@ transfer_knob_dref = "Mustang/cockpit/fuel/transfer_knob" # 0 is left, 1 is off 
 refresh_rate = 0.01
 port = 5670
 agent_name = "Aircraft"
-device = "wlo1"
+device = "Wi-Fi"
 verbose = False
 is_interrupted = False
 start_heading = None
@@ -510,4 +510,10 @@ def main():
             print("Retrying in 3 seconds...")
             time.sleep(3)
 
+def main2():
+    with xpc.XPlaneConnect() as client:
+        try:
+            client.sendCOMM("sim/GPS/g1000n3_hdg")
+        except Exception as e:
+            print(f"Error sending COMM: {e}")
 main()
