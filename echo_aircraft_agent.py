@@ -57,22 +57,21 @@ class Echo(metaclass=Singleton):
         self.r_throttle_o = None
         self.cas_o = None
         self.n1_match_bug_o = None
-        self.n1_percent_o = None
+        self.e1_n1_percent_o = None
+        self.e2_n1_percent_o = None
         self.slip_o = None
-        self.engine_fires_o = None
-        self.generators_off_o = None
+        self.engine_fire_l_o = None
+        self.engine_fire_r_o = None
         self.pax_safety_o = None
         self.master_warning_o = None
         self.master_caution_o = None
         self.flight_director_o = None
         self.speed_mode_o = None
         self.heading_mode_o = None
-        self.autopilot_master_o = None
         self.fuel_boost_l_o = None
         self.fuel_boost_r_o = None
         self.test_knob_o = None
         self.autopilot_heading_set_o = None
-        self.autopilot_sate_o = None
         self.yaw_damper_o = None
         self.l_ign_switch_o = None
         self.r_ign_switch_o = None
@@ -247,7 +246,7 @@ class Echo(metaclass=Singleton):
     def park_brake_o(self, value):
         self._park_brake_o = value
         if self._park_brake_o is not None:
-            igs.output_set_double("parkBrake", self._park_brake_o)
+            igs.output_set_bool("parkBrake", self._park_brake_o)
     
     @property
     def l_throttle_o(self):
@@ -268,32 +267,32 @@ class Echo(metaclass=Singleton):
             igs.output_set_double("r_throttle", self._r_throttle_o)
     
     @property
-    def cas_o(self):
-        return self.cas_o
-    @cas_o.setter
-    def cas_o(self, value):
-        self._cas_o = value
-        if self._cas_o is not None:
-            igs.output_set_double("cas", self._cas_o)
-    
-    @property
     def n1_match_bug_o(self):
         return self.n1_match_bug_o
     @n1_match_bug_o.setter
     def n1_match_bug_o(self, value):
         self._n1_match_bug_o = value
         if self._n1_match_bug_o is not None:
-            igs.output_set_double("n1_match_bug", self._n1_match_bug_o)
+            igs.output_set_bool("n1_match_bug", self._n1_match_bug_o)
     
     @property
-    def n1_percent_o(self):
-        return self.n1_percent_o
-    @n1_percent_o.setter
-    def n1_percent_o(self, value):
-        self._n1_percent_o = value
-        if self._n1_percent_o is not None:
-            igs.output_set_double("n1_percent", self._n1_percent_o)
-    
+    def e1_n1_percent_o(self):
+        return self.e1_n1_percent_o
+    @e1_n1_percent_o.setter
+    def e1_n1_percent_o(self, value):
+        self._e1_n1_percent_o = value
+        if self._e1_n1_percent_o is not None:
+            igs.output_set_double("e1_n1_percent", self._e1_n1_percent_o)
+
+    @property
+    def e2_n1_percent_o(self):
+        return self.e2_n1_percent_o
+    @e2_n1_percent_o.setter
+    def e2_n1_percent_o(self, value):
+        self._e2_n1_percent_o = value
+        if self._e2_n1_percent_o is not None:
+            igs.output_set_double("e2_n1_percent", self._e2_n1_percent_o)
+
     @property
     def slip_o(self):
         return self.slip_o
@@ -304,22 +303,22 @@ class Echo(metaclass=Singleton):
             igs.output_set_double("slip", self._slip_o)
     
     @property
-    def engine_fires_o(self):
-        return self.engine_fires_o
-    @engine_fires_o.setter
-    def engine_fires_o(self, value):
-        self._engine_fires_o = value
-        if self._engine_fires_o is not None:
-            igs.output_set_double("engine_fires", self._engine_fires_o)
-    
+    def engine_fire_l_o(self):
+        return self._engine_fire_l_o
+    @engine_fire_l_o.setter
+    def engine_fire_l_o(self, value):
+        self._engine_fire_l_o = value
+        if self._engine_fire_l_o is not None:
+            igs.output_set_bool("engine_fire_l", self._engine_fire_l_o)
+
     @property
-    def generators_off_o(self):
-        return self.generators_off_o
-    @generators_off_o.setter
-    def generators_off_o(self, value):
-        self._generators_off_o = value
-        if self._generators_off_o is not None:
-            igs.output_set_double("generators_off", self._generators_off_o)
+    def engine_fire_r_o(self):
+        return self._engine_fire_r_o
+    @engine_fire_r_o.setter
+    def engine_fire_r_o(self, value):
+        self._engine_fire_r_o = value
+        if self._engine_fire_r_o is not None:
+            igs.output_set_bool("engine_fire_r", self._engine_fire_r_o)
     
     @property
     def pax_safety_o(self):
@@ -328,7 +327,7 @@ class Echo(metaclass=Singleton):
     def pax_safety_o(self, value):
         self._pax_safety_o = value
         if self._pax_safety_o is not None:
-            igs.output_set_double("pax_safety", self._pax_safety_o)
+            igs.output_set_int("pax_safety", self._pax_safety_o)
     
     @property
     def master_warning_o(self):
@@ -337,7 +336,7 @@ class Echo(metaclass=Singleton):
     def master_warning_o(self, value):
         self._master_warning_o = value
         if self._master_warning_o is not None:
-            igs.output_set_double("master_warning", self._master_warning_o)
+            igs.output_set_bool("master_warning", self._master_warning_o)
     
     @property
     def master_caution_o(self):
@@ -346,8 +345,8 @@ class Echo(metaclass=Singleton):
     def master_caution_o(self, value):
         self._master_caution_o = value
         if self._master_caution_o is not None:
-            igs.output_set_double("master_caution", self._master_caution_o)
-    
+            igs.output_set_bool("master_caution", self._master_caution_o)
+
     @property
     def flight_director_o(self):
         return self.flight_director_o
@@ -355,7 +354,7 @@ class Echo(metaclass=Singleton):
     def flight_director_o(self, value):
         self._flight_director_o = value
         if self._flight_director_o is not None:
-            igs.output_set_double("flight_director", self._flight_director_o)
+            igs.output_set_int("flight_director", self._flight_director_o)
             
     @property
     def speed_mode_o(self):
@@ -364,7 +363,7 @@ class Echo(metaclass=Singleton):
     def speed_mode_o(self, value):
         self._speed_mode_o = value
         if self._speed_mode_o is not None:
-            igs.output_set_double("speed_mode", self._speed_mode_o)
+            igs.output_set_int("speed_mode", self._speed_mode_o)
     
     @property
     def heading_mode_o(self):
@@ -373,16 +372,7 @@ class Echo(metaclass=Singleton):
     def heading_mode_o(self, value):
         self._heading_mode_o = value
         if self._heading_mode_o is not None:
-            igs.output_set_double("heading_mode", self._heading_mode_o)
-    
-    @property
-    def autopilot_master_o(self):
-        return self.autopilot_master_o
-    @autopilot_master_o.setter
-    def autopilot_master_o(self, value):
-        self._autopilot_master_o = value
-        if self._autopilot_master_o is not None:
-            igs.output_set_double("autopilot_master", self._autopilot_master_o)
+            igs.output_set_int("heading_mode", self._heading_mode_o)
     
     @property
     def fuel_boost_l_o(self):
@@ -391,7 +381,7 @@ class Echo(metaclass=Singleton):
     def fuel_boost_l_o(self, value):
         self._fuel_boost_l_o = value
         if self._fuel_boost_l_o is not None:
-            igs.output_set_double("fuel_boost_l", self._fuel_boost_l_o)
+            igs.output_set_int("fuel_boost_l", self._fuel_boost_l_o)
     
     @property
     def fuel_boost_r_o(self):
@@ -400,7 +390,7 @@ class Echo(metaclass=Singleton):
     def fuel_boost_r_o(self, value):
         self._fuel_boost_r_o = value
         if self._fuel_boost_r_o is not None:
-            igs.output_set_double("fuel_boost_r", self._fuel_boost_r_o)
+            igs.output_set_int("fuel_boost_r", self._fuel_boost_r_o)
     
     @property
     def test_knob_o(self):
@@ -409,7 +399,7 @@ class Echo(metaclass=Singleton):
     def test_knob_o(self, value):
         self._test_knob_o = value
         if self._test_knob_o is not None:
-            igs.output_set_double("test_knob", self._test_knob_o)
+            igs.output_set_int("test_knob", self._test_knob_o)
     
     @property
     def autopilot_heading_set_o(self):
@@ -418,16 +408,7 @@ class Echo(metaclass=Singleton):
     def autopilot_heading_set_o(self, value):
         self._autopilot_heading_set_o = value
         if self._autopilot_heading_set_o is not None:
-            igs.output_set_double("autopilot_heading_set", self._autopilot_heading_set_o) 
-            
-    @property
-    def autopilot_state_o(self):
-        return self.autopilot_state_o
-    @autopilot_state_o.setter
-    def autopilot_state_o(self, value):
-        self._autopilot_state_o = value
-        if self._autopilot_state_o is not None:
-            igs.output_set_double("autopilot_state", self._autopilot_state_o)
+            igs.output_set_int("autopilot_heading_set", self._autopilot_heading_set_o) 
             
     @property
     def yaw_damper_o(self):
@@ -436,7 +417,7 @@ class Echo(metaclass=Singleton):
     def yaw_damper_o(self, value):
         self._yaw_damper_o = value
         if self._yaw_damper_o is not None:
-            igs.output_set_double("yaw_damper", self._yaw_damper_o)
+            igs.output_set_bool("yaw_damper", self._yaw_damper_o)
     
     @property
     def l_ign_switch_o(self):
@@ -445,7 +426,7 @@ class Echo(metaclass=Singleton):
     def l_ign_switch_o(self, value):
         self._l_ign_switch_o = value
         if self._l_ign_switch_o is not None:
-            igs.output_set_double("l_ign_switch", self._l_ign_switch_o)
+            igs.output_set_bool("l_ign_switch", self._l_ign_switch_o)
     
     @property
     def r_ign_switch_o(self):
@@ -454,7 +435,7 @@ class Echo(metaclass=Singleton):
     def r_ign_switch_o(self, value):
         self._r_ign_switch_o = value
         if self._r_ign_switch_o is not None:
-            igs.output_set_double("r_ign_switch", self._r_ign_switch_o)
+            igs.output_set_bool("r_ign_switch", self._r_ign_switch_o)
     
     @property
     def l_gen_switch_o(self):
@@ -463,7 +444,7 @@ class Echo(metaclass=Singleton):
     def l_gen_switch_o(self, value):
         self._l_gen_switch_o = value
         if self._l_gen_switch_o is not None:
-            igs.output_set_double("l_gen_switch", self._l_gen_switch_o)
+            igs.output_set_int("l_gen_switch", self._l_gen_switch_o)
     
     @property
     def r_gen_switch_o(self):
@@ -472,8 +453,8 @@ class Echo(metaclass=Singleton):
     def r_gen_switch_o(self, value):
         self._r_gen_switch_o = value
         if self._r_gen_switch_o is not None:
-            igs.output_set_double("r_gen_switch", self._r_gen_switch_o)
-    
+            igs.output_set_int("r_gen_switch", self._r_gen_switch_o)
+
     @property
     def transfer_knob_o(self):
         return self.transfer_knob_o
@@ -481,7 +462,7 @@ class Echo(metaclass=Singleton):
     def transfer_knob_o(self, value):
         self._transfer_knob_o = value
         if self._transfer_knob_o is not None:
-            igs.output_set_double("transfer_knob", self._transfer_knob_o)
+            igs.output_set_int("transfer_knob", self._transfer_knob_o)
 
     # =========================================================================
 
