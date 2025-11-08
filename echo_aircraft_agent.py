@@ -34,6 +34,8 @@ class Echo(metaclass=Singleton):
         self.flaps_i = None
         self.gear_i = None
         self.brake_i = None
+        self.pitot_heat_i = None
+        
 
         # outputs
         self.airspeed_o = None
@@ -78,6 +80,15 @@ class Echo(metaclass=Singleton):
         self.l_gen_switch_o = None
         self.r_gen_switch_o = None
         self.transfer_knob_o = None
+        self.baro_setting_o = None
+        self.cabin_altitude_o = None
+        self.l_gen_load_o = None
+        self.r_gen_load_o = None
+        self.pitot_heat_o = None
+        self.l_windshield_anti_ice_o = None
+        self.r_windshield_anti_ice_o = None
+        self.exterior_lights_o = None
+        self.anti_coll_lights_o = None
 
     @property
     def airspeed_o(self):
@@ -463,6 +474,87 @@ class Echo(metaclass=Singleton):
         self._transfer_knob_o = value
         if self._transfer_knob_o is not None:
             igs.output_set_int("transfer_knob", self._transfer_knob_o)
+    
+    @property
+    def baro_setting_o(self):
+        return self.baro_setting_o
+    @baro_setting_o.setter
+    def baro_setting_o(self, value):
+        self._baro_setting_o = value
+        if self._baro_setting_o is not None:
+            igs.output_set_double("baro_setting", self._baro_setting_o)
+
+    @property
+    def cabin_altitude_o(self):
+        return self.cabin_altitude_o
+    @cabin_altitude_o.setter
+    def cabin_altitude_o(self, value):
+        self._cabin_altitude_o = value
+        if self._cabin_altitude_o is not None:
+            igs.output_set_double("cabin_altitude", self._cabin_altitude_o)
+
+    @property
+    def l_gen_load_o(self):
+        return self._l_gen_load_o
+    @l_gen_load_o.setter
+    def l_gen_load_o(self, value):
+        self._l_gen_load_o = value
+        if self._l_gen_load_o is not None:
+            igs.output_set_double("l_gen_load", self._l_gen_load_o)
+
+    @property
+    def r_gen_load_o(self):
+        return self._r_gen_load_o
+    @r_gen_load_o.setter
+    def r_gen_load_o(self, value):
+        self._r_gen_load_o = value
+        if self._r_gen_load_o is not None:
+            igs.output_set_double("r_gen_load", self._r_gen_load_o)
+    
+    @property
+    def pitot_heat_o(self):
+        return self._pitot_heat_o
+    @pitot_heat_o.setter
+    def pitot_heat_o(self, value):
+        self._pitot_heat_o = value
+        if self._pitot_heat_o is not None:
+            igs.output_set_bool("pitot_heat", self._pitot_heat_o)
+    
+    @property
+    def l_windshield_anti_ice_o(self):
+        return self._l_windshield_anti_ice_o
+    @l_windshield_anti_ice_o.setter
+    def l_windshield_anti_ice_o(self, value):
+        self._l_windshield_anti_ice_o = value
+        if self._l_windshield_anti_ice_o is not None:
+            igs.output_set_bool("l_windshield_anti_ice", self._l_windshield_anti_ice_o)
+
+    @property
+    def r_windshield_anti_ice_o(self):
+        return self._r_windshield_anti_ice_o
+    @r_windshield_anti_ice_o.setter
+    def r_windshield_anti_ice_o(self, value):
+        self._r_windshield_anti_ice_o = value
+        if self._r_windshield_anti_ice_o is not None:
+            igs.output_set_bool("r_windshield_anti_ice", self._r_windshield_anti_ice_o)
+    
+    @property
+    def exterior_lights_o(self):
+        return self._exterior_lights_o
+    @exterior_lights_o.setter
+    def exterior_lights_o(self, value):
+        self._exterior_lights_o = value
+        if self._exterior_lights_o is not None:
+            igs.output_set_int("exterior_lights", self._exterior_lights_o)
+
+    @property
+    def anti_coll_lights_o(self):
+        return self._anti_coll_lights_o
+    @anti_coll_lights_o.setter
+    def anti_coll_lights_o(self, value):
+        self._anti_coll_lights_o = value
+        if self._anti_coll_lights_o is not None:
+            igs.output_set_bool("anti_coll_lights", self._anti_coll_lights_o)
 
     # =========================================================================
 
