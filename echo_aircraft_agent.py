@@ -35,8 +35,8 @@ class Echo(metaclass=Singleton):
         self.gear_i = None
         self.brake_i = None
         self.pitot_heat_i = None
-        
-
+        self.alt_sel_i = None
+        self.heading_sel_i = None
         # outputs
         self.airspeed_o = None
         self.pitch_o = None
@@ -89,6 +89,14 @@ class Echo(metaclass=Singleton):
         self.r_windshield_anti_ice_o = None
         self.exterior_lights_o = None
         self.anti_coll_lights_o = None
+        self.l_engine_anti_ice_o = None
+        self.r_engine_anti_ice_o = None
+        self.trim_rudder_o = None
+        self.alt_sel_o = None
+        self.heading_sel_o = None
+        self.l_bottle_arm_o = None
+        self.r_bottle_arm_o = None
+        self.ptt_o = None
 
     @property
     def airspeed_o(self):
@@ -555,6 +563,78 @@ class Echo(metaclass=Singleton):
         self._anti_coll_lights_o = value
         if self._anti_coll_lights_o is not None:
             igs.output_set_bool("anti_coll_lights", self._anti_coll_lights_o)
+            
+    @property
+    def l_engine_anti_ice_o(self):
+        return self._l_engine_anti_ice_o
+    @l_engine_anti_ice_o.setter
+    def l_engine_anti_ice_o(self, value):
+        self._l_engine_anti_ice_o = value
+        if self._l_engine_anti_ice_o is not None:
+            igs.output_set_bool("l_engine_anti_ice", self._l_engine_anti_ice_o)
+
+    @property
+    def r_engine_anti_ice_o(self):
+        return self._r_engine_anti_ice_o
+    @r_engine_anti_ice_o.setter
+    def r_engine_anti_ice_o(self, value):
+        self._r_engine_anti_ice_o = value
+        if self._r_engine_anti_ice_o is not None:
+            igs.output_set_bool("r_engine_anti_ice", self._r_engine_anti_ice_o)
+    
+    @property
+    def trim_rudder_o(self):
+        return self._trim_rudder_o
+    @trim_rudder_o.setter
+    def trim_rudder_o(self, value):
+        self._trim_rudder_o = value
+        if self._trim_rudder_o is not None:
+            igs.output_set_double("trim_rudder", self._trim_rudder_o)
+            
+    @property
+    def alt_sel_o(self):
+        return self._alt_sel_o
+    @alt_sel_o.setter
+    def alt_sel_o(self, value):
+        self._alt_sel_o = value
+        if self._alt_sel_o is not None:
+            igs.output_set_int("alt_sel", self._alt_sel_o)
+
+    @property
+    def heading_sel_o(self):
+        return self._heading_sel_o
+    @heading_sel_o.setter
+    def heading_sel_o(self, value):
+        self._heading_sel_o = value
+        if self._heading_sel_o is not None:
+            igs.output_set_int("heading_sel", self._heading_sel_o)
+    
+    @property
+    def l_bottle_arm_o(self):
+        return self._l_bottle_arm_o
+    @l_bottle_arm_o.setter
+    def l_bottle_arm_o(self, value):
+        self._l_bottle_arm_o = value
+        if self._l_bottle_arm_o is not None:
+            igs.output_set_bool("l_bottle_arm", self._l_bottle_arm_o)
+
+    @property
+    def r_bottle_arm_o(self):
+        return self._r_bottle_arm_o
+    @r_bottle_arm_o.setter
+    def r_bottle_arm_o(self, value):
+        self._r_bottle_arm_o = value
+        if self._r_bottle_arm_o is not None:
+            igs.output_set_bool("r_bottle_arm", self._r_bottle_arm_o)
+
+    @property
+    def ptt_o(self):
+        return self._ptt_o
+    @ptt_o.setter
+    def ptt_o(self, value):
+        self._ptt_o = value
+        if self._ptt_o is not None:
+            igs.output_set_bool("ptt", self._ptt_o)
 
     # =========================================================================
 

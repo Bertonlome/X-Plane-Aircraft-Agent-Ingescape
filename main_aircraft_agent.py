@@ -15,7 +15,10 @@ import xpc
 import signal
 from collections import Counter
 
+neverDone = True
+
 ## def datarefs string
+ptt_dref = "sim/cockpit2/controls/tailwheel_lock_ratio" # function as a dummy ptt for now
 ias_dref = "sim/cockpit2/gauges/indicators/airspeed_kts_pilot"
 pitch_dref = "sim/cockpit2/gauges/indicators/pitch_AHARS_deg_pilot"
 altitude_dref = "sim/cockpit2/gauges/indicators/altitude_ft_pilot"
@@ -53,8 +56,7 @@ speed_mode_comm = "sim/GPS/g1000n1_flc" # to toggle the speed mode
 heading_mode_dref = "Mustang/autopilot/annun/hdg" #reading for the mustang 0 is off 2 is on
 vertical_speed_down_comm = "sim/autopilot/vertical_speed_down" # to decrease the vs or the flc speed target
 vertical_speed_up_comm = "sim/autopilot/vertical_speed_up" # to increase the vs or the flc speed target
-initial_hold_altitude = 3000 # to be set at the briefing
-altitude_hold_ap_dref = "Mustang/cockpit/ap/autopilot" # x100 ft
+alt_sel_dref = "Mustang/cockpit/ap/autopilot" # x100 ft
 heading_mode_comm = "sim/GPS/g1000n1_hdg" # to toggle the heading mode
 autopilot_master_dref = "sim/cockpit/autopilot/autopilot_mode" # 0 is off, 1 is FD 2 is AP + FD
 autopilot_master_comm = "sim/GPS/g1000n1_ap" # to toggle the autopilot master
@@ -63,7 +65,7 @@ bottle_r_discharge_dref = "Mustang/cockpit/bottle_r_arm_b" # 0 is off, 1 is on
 fuel_boost_l_dref = "Mustang/cockpit/fuel/boost_l" # 0 is off, 1 is on
 fuel_boost_r_dref = "Mustang/cockpit/fuel/boost_r" # 0 is off, 1 is on
 test_knob_dref = "Mustang/cockpit/test_knob" # 0 to 11 for each test position
-autopilot_heading_set_dref = "sim/cockpit/autopilot/heading" # 0 to 360
+heading_sel_dref = "sim/cockpit/autopilot/heading_mag" # 0 to 360
 autopilot_state_dref = "sim/cockpit/autopilot/autopilot_state" #need to understand this seems to be an integer that represents the state of the autopilot
 yaw_damper_dref = "sim/cockpit/switches/yaw_damper_on" # 0 is off, 1 is on
 l_ign_switch_dref = "Mustang/igniter_l" # 0 is off, 1 is on
@@ -75,11 +77,14 @@ baro_setting_dref = "sim/cockpit/misc/barometer_setting"
 cabin_altitude_dref = "sim/cockpit2/pressurization/indicators/cabin_altitude_ft"
 gen_load_dref = "sim/cockpit2/electrical/generator_amps" # [0.0, 0.0] first means L generator, second means R generator
 pitot_heat_dref = "sim/cockpit/switches/pitot_heat_on" # 0 is off, 1 is on
-anti_ice_engine_dref = "sim/cockpit/switches/anti_ice_engine_air" # [0,0] # first means L engine, second means R engine
+anti_ice_engine_dref = "sim/cockpit/switches/anti_ice_engine_air" # [0,0,0,0,0,0,0,0] # first means L engine, second means R engine
 l_windshield_anti_ice_dref = "Mustang/cockpit/ai/l_windsheild" # 0 is off, 1 is on
 r_windshield_anti_ice_dref = "Mustang/cockpit/ai/r_windsheild" # 0 is off, 1 is on
 exterior_lights_dref = "Mustang/cockpit/lighting/taxi_landing" # 0 is off, 1 is taxi, 2 is landing
 anti_coll_lights_dref = "sim/cockpit/electrical/strobe_lights_on" # 0 is off, 1 is on
+load_situation_2_comm = "sim/operation/load_situation_2" 
+botle_r_arm_dref = "Mustang/cockpit/bottle_r_arm_b" # 0 is off, 1 is on
+botle_l_arm_dref = "Mustang/cockpit/bottle_l_arm_b" # 0 is off, 1 is on
 
 """
 		a.observeInput("alarm", agentCB);
@@ -136,6 +141,10 @@ def bool_input_callback(io_type, name, value_type, value, my_data):
         send_dref(r_windshield_anti_ice_dref, int(value))
     elif name == "anti_coll_lights":
         send_dref(anti_coll_lights_dref, int(value))
+    elif name == "l_bottle_arm":
+        send_dref(botle_l_arm_dref, int(value))
+    elif name == "r_bottle_arm":
+        send_dref(botle_r_arm_dref, int(value))
 
 def double_input_callback(io_type, name, value_type, value, my_data):
     if name == "elevator":
@@ -170,6 +179,9 @@ def double_input_callback(io_type, name, value_type, value, my_data):
             current_val = get_dref(mustang_r_throttle_dref, is_double=True)[0]
     elif name == "baro_setting":
         send_dref(baro_setting_dref, value)
+    elif name == "trim_rudder":
+        print(f"Setting trim_rudder to {value}")
+        send_dref(trim_rudder_dref, value)
 
 def int_input_callback(io_type, name, value_type, value, my_data):
     if name == "test_knob":
@@ -180,8 +192,10 @@ def int_input_callback(io_type, name, value_type, value, my_data):
         send_dref(r_gen_switch_dref, value)
     elif name == "transfer_knob":
         send_dref(transfer_knob_dref, value)
-    elif name == "autopilot_heading_set":
-        send_dref(autopilot_heading_set_dref, value)
+    elif name == "alt_sel":
+        send_dref(alt_sel_dref, value)
+    elif name == "heading_sel":
+        send_dref(heading_sel_dref, value)
     elif name == "fuel_boost_l":
         send_dref(fuel_boost_l_dref, value)
     elif name == "fuel_boost_r":
@@ -192,7 +206,13 @@ def int_input_callback(io_type, name, value_type, value, my_data):
         send_dref(exterior_lights_dref, value)
         
 def impulsion_input_callback(io_type, name, value_type, value, my_data):
-    if name == "gear":
+    global neverDone
+    if name == "reset":
+        print("Resetting simulation...")
+        neverDone = True
+        agent.outside_event_o = ""
+        send_comm(load_situation_2_comm)
+    elif name == "gear":
         current_val = get_control_inputs()[4]
         print(f"current val = {current_val}")
         if current_val == 1: set_control_inputs("gear", 0)
@@ -350,6 +370,7 @@ agent = Echo()
 igs.observe_agent_events(on_agent_event_callback, agent)
 igs.observe_freeze(on_freeze_callback, agent)
 
+igs.input_create("reset", igs.IMPULSION_T, None)
 igs.input_create("elevator", igs.DOUBLE_T, None)
 igs.input_create("rudder", igs.DOUBLE_T, None)
 igs.input_create("aileron", igs.DOUBLE_T, None)
@@ -362,7 +383,9 @@ igs.input_create("r_throttle", igs.DOUBLE_T, None)
 igs.input_create("pax_safety", igs.INTEGER_T, None) # 0 is off, 1 is seatbelt 2 is on  
 igs.input_create("flight_director", igs.IMPULSION_T, None)  
 igs.input_create("speed_mode", igs.IMPULSION_T, None) 
+igs.input_create("alt_sel", igs.INTEGER_T, None)
 igs.input_create("heading_mode", igs.IMPULSION_T, None)  
+igs.input_create("heading_sel", igs.INTEGER_T, None)
 igs.input_create("autopilot_master", igs.IMPULSION_T, None)  # 0 is off, 1 is FD 2 is AP + FD
 igs.input_create("fuel_boost_l", igs.INTEGER_T, None)  # 0 is norm, 1 is off, 2 is on
 igs.input_create("fuel_boost_r", igs.INTEGER_T, None)  # 0 is norm, 1 is off, 2 is on
@@ -385,6 +408,9 @@ igs.input_create("l_windshield_anti_ice", igs.BOOL_T, None)  # 0 is off, 1 is on
 igs.input_create("r_windshield_anti_ice", igs.BOOL_T, None)  # 0 is off, 1 is on
 igs.input_create("exterior_lights", igs.INTEGER_T, None)  # 0 is off, 1 is taxi, 2 is landing
 igs.input_create("anti_coll_lights", igs.BOOL_T, None)  # 0 is off, 1 is on
+igs.input_create("trim_rudder", igs.DOUBLE_T, None)
+igs.input_create("l_bottle_arm", igs.BOOL_T, None)  # 0 is off, 1 is on
+igs.input_create("r_bottle_arm", igs.BOOL_T, None)  # 0 is off, 1 is on
 
 igs.output_create("airspeed", igs.DOUBLE_T, None)
 igs.output_create("pitch", igs.DOUBLE_T, None)
@@ -438,7 +464,14 @@ igs.output_create("l_windshield_anti_ice", igs.BOOL_T, None)  # 0 is off, 1 is o
 igs.output_create("r_windshield_anti_ice", igs.BOOL_T, None)  # 0 is off, 1 is on
 igs.output_create("exterior_lights", igs.INTEGER_T, None)  # 0 is off, 1 is taxi, 2 is landing
 igs.output_create("anti_coll_lights", igs.BOOL_T, None)  # 0 is off, 1 is on
+igs.output_create("trim_rudder", igs.DOUBLE_T, None)
+igs.output_create("alt_sel", igs.INTEGER_T, None)
+igs.output_create("heading_sel", igs.INTEGER_T, None)
+igs.output_create("l_bottle_arm", igs.BOOL_T, None)  # 0 is off, 1 is on
+igs.output_create("r_bottle_arm", igs.BOOL_T, None)  # 0 is off, 1 is on
+igs.output_create("ptt", igs.BOOL_T, None)  # Push-to-talk button
 
+igs.observe_input("reset", impulsion_input_callback, None)
 igs.observe_input("elevator", double_input_callback, None)
 igs.observe_input("rudder", double_input_callback, None)
 igs.observe_input("aileron", double_input_callback, None)
@@ -472,7 +505,11 @@ igs.observe_input("l_windshield_anti_ice", bool_input_callback, None)  # 0 is of
 igs.observe_input("r_windshield_anti_ice", bool_input_callback, None)  # 0 is off, 1 is on
 igs.observe_input("exterior_lights", int_input_callback, None)  # 0 is off, 1 is taxi, 2 is landing
 igs.observe_input("anti_coll_lights", bool_input_callback, None)  # 0 is off, 1 is on
-
+igs.observe_input("trim_rudder", double_input_callback, None)
+igs.observe_input("alt_sel", int_input_callback, None)
+igs.observe_input("heading_sel", int_input_callback, None)
+igs.observe_input("l_bottle_arm", bool_input_callback, None)  # 0 is off, 1 is on
+igs.observe_input("r_bottle_arm", bool_input_callback, None)  # 0 is off, 1 is on
 
 igs.log_set_console(True)
 igs.log_set_console_level(igs.LOG_INFO)
@@ -483,13 +520,13 @@ signal.signal(signal.SIGINT, signal_handler)
 
 def main(BirdStrikeEnabled=True):
     global is_interrupted
-    neverDone = True
+    global neverDone
     while not is_interrupted:
         try:
             while not is_interrupted:
                 time.sleep(refresh_rate)
 
-                airspeed, vert_speed, park_brake, mustang_l_throttle, mustang_r_throttle, n1_match_bug, n1_percent, slip, engine_fires, pax_safety, master_warning, master_caution, flight_director, speed_mode, heading_mode, fuel_boost_l, fuel_boost_r, test_knob, autopilot_heading_set, yaw_damper, l_ign_switch, r_ign_switch, l_gen_switch, r_gen_switch, transfer_knob, baro_setting, cabin_altitude, gen_load, pitot_heat, l_windshield_anti_ice, r_windshield_anti_ice, exterior_lights, anti_coll_lights = get_drefs([ias_dref, verticalSpeed_dref, parkBrake_dref, mustang_l_throttle_dref, mustang_r_throttle_dref, n1_match_bug_dref, n1_percent_dref, slip_dref, engine_fires_dref, pax_safety_dref, master_warning_dref, master_caution_dref, flight_director_dref, speed_mode_dref, heading_mode_dref, fuel_boost_l_dref, fuel_boost_r_dref, test_knob_dref, autopilot_heading_set_dref, yaw_damper_dref, l_ign_switch_dref, r_ign_switch_dref, l_gen_switch_dref, r_gen_switch_dref, transfer_knob_dref, baro_setting_dref, cabin_altitude_dref, gen_load_dref, pitot_heat_dref, l_windshield_anti_ice_dref, r_windshield_anti_ice_dref, exterior_lights_dref, anti_coll_lights_dref])
+                airspeed, vert_speed, park_brake, mustang_l_throttle, mustang_r_throttle, n1_match_bug, n1_percent, slip, engine_fires, pax_safety, master_warning, master_caution, flight_director, speed_mode, heading_mode, fuel_boost_l, fuel_boost_r, test_knob, autopilot_heading_set, yaw_damper, l_ign_switch, r_ign_switch, l_gen_switch, r_gen_switch, transfer_knob, baro_setting, cabin_altitude, gen_load, pitot_heat, l_windshield_anti_ice, r_windshield_anti_ice, exterior_lights, anti_coll_lights, engine_anti_ice, trim_rudder, alt_sel, heading_sel, l_bottle_arm, r_bottle_arm, ptt = get_drefs([ias_dref, verticalSpeed_dref, parkBrake_dref, mustang_l_throttle_dref, mustang_r_throttle_dref, n1_match_bug_dref, n1_percent_dref, slip_dref, engine_fires_dref, pax_safety_dref, master_warning_dref, master_caution_dref, flight_director_dref, speed_mode_dref, heading_mode_dref, fuel_boost_l_dref, fuel_boost_r_dref, test_knob_dref, heading_sel_dref, yaw_damper_dref, l_ign_switch_dref, r_ign_switch_dref, l_gen_switch_dref, r_gen_switch_dref, transfer_knob_dref, baro_setting_dref, cabin_altitude_dref, gen_load_dref, pitot_heat_dref, l_windshield_anti_ice_dref, r_windshield_anti_ice_dref, exterior_lights_dref, anti_coll_lights_dref, anti_ice_engine_dref, trim_rudder_dref, alt_sel_dref, heading_sel_dref, botle_l_arm_dref, botle_r_arm_dref, ptt_dref])
 
                 agent.airspeed_o = airspeed[0]
                 
@@ -535,11 +572,18 @@ def main(BirdStrikeEnabled=True):
                 agent.baro_setting_o = baro_setting[0]
                 agent.cabin_altitude_o = cabin_altitude[0]
                 agent.pitot_heat_o = bool(pitot_heat[0])
-                agent.l_windshield_anti_ice = bool(l_windshield_anti_ice[0])
-                agent.r_windshield_anti_ice = bool(r_windshield_anti_ice[0])
-                agent.exterior_lights = int(exterior_lights[0])
-                agent.anti_coll_lights = bool(anti_coll_lights[0])
-
+                agent.l_windshield_anti_ice_o = bool(l_windshield_anti_ice[0])
+                agent.r_windshield_anti_ice_o = bool(r_windshield_anti_ice[0])
+                agent.exterior_lights_o = int(exterior_lights[0])
+                agent.anti_coll_lights_o = bool(anti_coll_lights[0])
+                agent.l_engine_anti_ice_o = bool(engine_anti_ice[0])
+                agent.r_engine_anti_ice_o = bool(engine_anti_ice[1])
+                agent.trim_rudder_o = trim_rudder[0]
+                agent.alt_sel_o = int(alt_sel[0])
+                agent.heading_sel_o = int(heading_sel[0])
+                agent.l_bottle_arm_o = bool(l_bottle_arm[0])
+                agent.r_bottle_arm_o = bool(r_bottle_arm[0])
+                agent.ptt_o = bool(ptt[0])
                 time.sleep(refresh_rate)
                 pitch, heading, roll, alt, lat, long = get_position()
                 agent.pitch_o = pitch
