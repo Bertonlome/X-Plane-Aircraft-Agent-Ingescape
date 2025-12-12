@@ -97,6 +97,7 @@ class Echo(metaclass=Singleton):
         self.l_bottle_arm_o = None
         self.r_bottle_arm_o = None
         self.ptt_o = None
+        self.yoke_hide_o = None
 
     @property
     def airspeed_o(self):
@@ -635,6 +636,16 @@ class Echo(metaclass=Singleton):
         self._ptt_o = value
         if self._ptt_o is not None:
             igs.output_set_bool("ptt", self._ptt_o)
+
+            
+    @property
+    def yoke_hide_o(self):
+        return self._yoke_hide_o
+    @yoke_hide_o.setter
+    def yoke_hide_o(self, value):
+        self._yoke_hide_o = value
+        if self._yoke_hide_o is not None:
+            igs.output_set_bool("yoke_hide", self._yoke_hide_o)
 
     # =========================================================================
 

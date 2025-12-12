@@ -1,0 +1,3 @@
+# X-Plane Aircraft Agent Requirements
+ingescape
+pygame  # For joystick/HID input handling

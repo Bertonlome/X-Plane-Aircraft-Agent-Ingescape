@@ -3,7 +3,7 @@
     "configurations": [
         {
             "name": "Run main",
-            "type": "python",
+            "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/main_aircraft_agent.py",
             "console": "integratedTerminal"

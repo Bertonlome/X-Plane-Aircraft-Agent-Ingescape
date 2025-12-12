@@ -14,6 +14,7 @@ import time
 import xpc
 import signal
 from collections import Counter
+from joystick_handler import JoystickHandler
 
 neverDone = True
 
@@ -85,6 +86,9 @@ anti_coll_lights_dref = "sim/cockpit/electrical/strobe_lights_on" # 0 is off, 1 
 load_situation_2_comm = "sim/operation/load_situation_2" 
 botle_r_arm_dref = "Mustang/cockpit/bottle_r_arm_b" # 0 is off, 1 is on
 botle_l_arm_dref = "Mustang/cockpit/bottle_l_arm_b" # 0 is off, 1 is on
+l_cutoff_dref = "Mustang/cockpit/engine/l_cutoff"
+r_cutoff_dref = "Mustang/cockpit/engine/r_cutoff"
+yoke_hide_dref = "Mustang/cockpit/yoke_hide" # 0 is show, 1 is hide
 
 """
 		a.observeInput("alarm", agentCB);
@@ -106,11 +110,15 @@ device = "A7500_NETGEAR"
 verbose = False
 is_interrupted = False
 start_heading = None
+joystick_handler = None  # Global joystick handler instance
 
 def signal_handler(signal_received, frame):
-    global is_interrupted
+    global is_interrupted, joystick_handler
     print("\n", signal.strsignal(signal_received), sep="")
     is_interrupted = True
+    # Stop joystick monitoring on exit
+    if joystick_handler:
+        joystick_handler.stop()
 
 def on_agent_event_callback(event, uuid, name, event_data, my_data):
     agent_object = my_data
@@ -145,6 +153,8 @@ def bool_input_callback(io_type, name, value_type, value, my_data):
         send_dref(botle_l_arm_dref, int(value))
     elif name == "r_bottle_arm":
         send_dref(botle_r_arm_dref, int(value))
+    elif name == "yoke_hide":
+        send_dref(yoke_hide_dref, int(value))
 
 def double_input_callback(io_type, name, value_type, value, my_data):
     if name == "elevator":
@@ -248,11 +258,11 @@ def get_dref(arg, is_double=False):
                 # Return the array with rounded values
                 rounded_value = [round(v, 2) for v in myValue]
             else:
-                # Single value
-                rounded_value = round(myValue, 2)
+                # Single value - wrap in list for consistency
+                rounded_value = [round(myValue, 2)]
     except Exception as e:
         print(f"Error getting dref {arg}: {e}")
-        rounded_value = 0.0
+        rounded_value = [0.0]
     return rounded_value
 
 def get_drefs(args):
@@ -265,11 +275,11 @@ def get_drefs(args):
                     # Keep the array as-is, but round each element
                     processed_values.append([round(v, 1) for v in value])
                 else:
-                    # Single value, just round it
-                    processed_values.append(round(value, 1))
+                    # Single value - wrap in list for consistency
+                    processed_values.append([round(value, 1)])
     except Exception as e:
         print(f"Error getting drefs {args}: {e}")
-        processed_values = [0.0] * len(args)
+        processed_values = [[0.0]] * len(args)
     return processed_values
 
 def send_dref(arg, value):
@@ -350,11 +360,6 @@ def get_position():
         pitch, roll, heading, alt, lat, long = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
     return pitch, heading, roll, alt, lat, long
 
-def signal_handler(signal_received, frame):
-    global is_interrupted
-    print("\n", signal.strsignal(signal_received), sep="")
-    is_interrupted = True
-
 # catch SIGINT handler before starting agent
 signal.signal(signal.SIGINT, signal_handler)
 
@@ -378,8 +383,8 @@ igs.input_create("throttle", igs.DOUBLE_T, None)
 igs.input_create("flaps", igs.DOUBLE_T, None)
 igs.input_create("gear", igs.IMPULSION_T, None)
 igs.input_create("brake", igs.IMPULSION_T, None)
-igs.input_create("l_throttle", igs.DOUBLE_T, None)
-igs.input_create("r_throttle", igs.DOUBLE_T, None)
+igs.input_create("l_throttle", igs.DOUBLE_T, None) #-1 = cutoff
+igs.input_create("r_throttle", igs.DOUBLE_T, None) #-1 = cutoff
 igs.input_create("pax_safety", igs.INTEGER_T, None) # 0 is off, 1 is seatbelt 2 is on  
 igs.input_create("flight_director", igs.IMPULSION_T, None)  
 igs.input_create("speed_mode", igs.IMPULSION_T, None) 
@@ -411,6 +416,7 @@ igs.input_create("anti_coll_lights", igs.BOOL_T, None)  # 0 is off, 1 is on
 igs.input_create("trim_rudder", igs.DOUBLE_T, None)
 igs.input_create("l_bottle_arm", igs.BOOL_T, None)  # 0 is off, 1 is on
 igs.input_create("r_bottle_arm", igs.BOOL_T, None)  # 0 is off, 1 is on
+igs.input_create("yoke_hide", igs.BOOL_T, None)  # 0 is show, 1 is hide
 
 igs.output_create("airspeed", igs.DOUBLE_T, None)
 igs.output_create("pitch", igs.DOUBLE_T, None)
@@ -470,6 +476,7 @@ igs.output_create("heading_sel", igs.INTEGER_T, None)
 igs.output_create("l_bottle_arm", igs.BOOL_T, None)  # 0 is off, 1 is on
 igs.output_create("r_bottle_arm", igs.BOOL_T, None)  # 0 is off, 1 is on
 igs.output_create("ptt", igs.BOOL_T, None)  # Push-to-talk button
+igs.output_create("yoke_hide", igs.BOOL_T, None)  # 0 is show, 1 is hide
 
 igs.observe_input("reset", impulsion_input_callback, None)
 igs.observe_input("elevator", double_input_callback, None)
@@ -510,6 +517,7 @@ igs.observe_input("alt_sel", int_input_callback, None)
 igs.observe_input("heading_sel", int_input_callback, None)
 igs.observe_input("l_bottle_arm", bool_input_callback, None)  # 0 is off, 1 is on
 igs.observe_input("r_bottle_arm", bool_input_callback, None)  # 0 is off, 1 is on
+igs.observe_input("yoke_hide", bool_input_callback, None)  # 0 is show, 1 is hide
 
 igs.log_set_console(True)
 igs.log_set_console_level(igs.LOG_INFO)
@@ -517,6 +525,33 @@ igs.log_set_console_level(igs.LOG_INFO)
 igs.start_with_device(device, port)
 # catch SIGINT handler after starting agent
 signal.signal(signal.SIGINT, signal_handler)
+
+# ============= Joystick Integration =============
+def on_joystick_trigger_press():
+    """Called when joystick trigger is pressed."""
+    print("Joystick trigger pressed - PTT activated")
+    # You can add custom actions here, for example:
+    send_dref(ptt_dref, 1)  # Activate PTT
+    # Or trigger any other X-Plane action
+
+def on_joystick_trigger_release():
+    """Called when joystick trigger is released."""
+    print("Joystick trigger released - PTT deactivated")
+    # You can add custom actions here, for example:
+# Initialize and start joystick monitoring
+joystick_handler = JoystickHandler(joystick_index=0, polling_rate=0.01)
+if joystick_handler.initialize():
+    # Register button callbacks
+    joystick_handler.register_button_press(0, on_joystick_trigger_press)      # Trigger button
+    joystick_handler.register_button_release(0, on_joystick_trigger_release)  # Trigger release
+    # Start monitoring in background thread
+    joystick_handler.start()
+    print("Joystick integration enabled and running in parallel with X-Plane control.")
+else:
+    print("Joystick not available - continuing without joystick integration.")
+    joystick_handler = None
+# ============= End Joystick Integration =============
+
 
 def main(BirdStrikeEnabled=True):
     global is_interrupted
@@ -526,7 +561,7 @@ def main(BirdStrikeEnabled=True):
             while not is_interrupted:
                 time.sleep(refresh_rate)
 
-                airspeed, vert_speed, park_brake, mustang_l_throttle, mustang_r_throttle, n1_match_bug, n1_percent, slip, engine_fires, pax_safety, master_warning, master_caution, flight_director, speed_mode, heading_mode, fuel_boost_l, fuel_boost_r, test_knob, autopilot_heading_set, yaw_damper, l_ign_switch, r_ign_switch, l_gen_switch, r_gen_switch, transfer_knob, baro_setting, cabin_altitude, gen_load, pitot_heat, l_windshield_anti_ice, r_windshield_anti_ice, exterior_lights, anti_coll_lights, engine_anti_ice, trim_rudder, alt_sel, heading_sel, l_bottle_arm, r_bottle_arm, ptt = get_drefs([ias_dref, verticalSpeed_dref, parkBrake_dref, mustang_l_throttle_dref, mustang_r_throttle_dref, n1_match_bug_dref, n1_percent_dref, slip_dref, engine_fires_dref, pax_safety_dref, master_warning_dref, master_caution_dref, flight_director_dref, speed_mode_dref, heading_mode_dref, fuel_boost_l_dref, fuel_boost_r_dref, test_knob_dref, heading_sel_dref, yaw_damper_dref, l_ign_switch_dref, r_ign_switch_dref, l_gen_switch_dref, r_gen_switch_dref, transfer_knob_dref, baro_setting_dref, cabin_altitude_dref, gen_load_dref, pitot_heat_dref, l_windshield_anti_ice_dref, r_windshield_anti_ice_dref, exterior_lights_dref, anti_coll_lights_dref, anti_ice_engine_dref, trim_rudder_dref, alt_sel_dref, heading_sel_dref, botle_l_arm_dref, botle_r_arm_dref, ptt_dref])
+                airspeed, vert_speed, park_brake, mustang_l_throttle, mustang_r_throttle, n1_match_bug, n1_percent, slip, engine_fires, pax_safety, master_warning, master_caution, flight_director, speed_mode, heading_mode, fuel_boost_l, fuel_boost_r, test_knob, autopilot_heading_set, yaw_damper, l_ign_switch, r_ign_switch, l_gen_switch, r_gen_switch, transfer_knob, baro_setting, cabin_altitude, gen_load, pitot_heat, l_windshield_anti_ice, r_windshield_anti_ice, exterior_lights, anti_coll_lights, engine_anti_ice, trim_rudder, alt_sel, heading_sel, l_bottle_arm, r_bottle_arm, ptt, yoke_hide = get_drefs([ias_dref, verticalSpeed_dref, parkBrake_dref, mustang_l_throttle_dref, mustang_r_throttle_dref, n1_match_bug_dref, n1_percent_dref, slip_dref, engine_fires_dref, pax_safety_dref, master_warning_dref, master_caution_dref, flight_director_dref, speed_mode_dref, heading_mode_dref, fuel_boost_l_dref, fuel_boost_r_dref, test_knob_dref, heading_sel_dref, yaw_damper_dref, l_ign_switch_dref, r_ign_switch_dref, l_gen_switch_dref, r_gen_switch_dref, transfer_knob_dref, baro_setting_dref, cabin_altitude_dref, gen_load_dref, pitot_heat_dref, l_windshield_anti_ice_dref, r_windshield_anti_ice_dref, exterior_lights_dref, anti_coll_lights_dref, anti_ice_engine_dref, trim_rudder_dref, alt_sel_dref, heading_sel_dref, botle_l_arm_dref, botle_r_arm_dref, ptt_dref, yoke_hide_dref])
 
                 agent.airspeed_o = airspeed[0]
                 
@@ -592,6 +627,7 @@ def main(BirdStrikeEnabled=True):
                 agent.altitude_o = alt 
                 agent.latitude_o = lat
                 agent.longitude_o = long
+                agent.yoke_hide_o = bool(yoke_hide[0])
 
                 time.sleep(refresh_rate)
                 aileron, elevator, rudder, throttle, gear, flaps, speedbrakes = get_control_inputs()
