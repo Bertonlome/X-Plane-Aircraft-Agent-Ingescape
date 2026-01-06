@@ -41,7 +41,7 @@ mustang_r_throttle_down_comm = "sim/engines/throttle_down_2"
 flaps_dref = "sim/cockpit2/controls/flap_ratio"
 gear_dref = "sim/cockpit/switches/gear_handle_status"
 bird_dref = "sim/operation/failures/rel_bird_strike"
-n1_match_bug_dref = "sim/cockpit/warnings/annunciators/N1_high" #[1,1,0,0,0,0,0,0] first two means E1 and E2 N1 match, last six are for the other engines
+n1_match_bug_dref = "sim/flightmodel/engine/apr_mode" #[1,1,0,0,0,0,0,0] first two means E1 and E2 N1 match, last six are for the other engines
 n1_percent_dref = "sim/cockpit2/engine/indicators/N1_percent" # [0.0, 0.0, 0.0, 0.0, 0.0, 0.0] first two means E1 and E2 N1 percent, last four are for the other engines max for the mustang is 91,27388 when toga is engaged static on the runway
 slip_dref = "sim/cockpit2/gauges/indicators/slip_deg" #positive is right, negative is left
 engine_fires_dref = "sim/cockpit/warnings/annunciators/engine_fires" # [0, 0] first means E1, second means E2
@@ -203,8 +203,8 @@ def int_input_callback(io_type, name, value_type, value, my_data):
     elif name == "transfer_knob":
         send_dref(transfer_knob_dref, value)
     elif name == "alt_sel":
-        send_dref(alt_sel_dref, value)
-    elif name == "heading_sel":
+        send_dref(alt_sel_dref, value / 100)  # X-Plane expects altitude in hundreds of feet
+    elif name == "autopilot_heading_set":
         send_dref(heading_sel_dref, value)
     elif name == "fuel_boost_l":
         send_dref(fuel_boost_l_dref, value)
@@ -395,7 +395,7 @@ igs.input_create("autopilot_master", igs.IMPULSION_T, None)  # 0 is off, 1 is FD
 igs.input_create("fuel_boost_l", igs.INTEGER_T, None)  # 0 is norm, 1 is off, 2 is on
 igs.input_create("fuel_boost_r", igs.INTEGER_T, None)  # 0 is norm, 1 is off, 2 is on
 igs.input_create("test_knob", igs.INTEGER_T, None)  # 0 to 11 for each test position
-igs.input_create("autopilot_heading_set", igs.DOUBLE_T, None)  # 0 to 360
+igs.input_create("autopilot_heading_set", igs.INTEGER_T, None)  # 0 to 360
 igs.input_create("yaw_damper", igs.BOOL_T, None)  # 0 is off, 1 is on
 igs.input_create("l_ign_switch", igs.BOOL_T, None)  # 0 is off, 1 is on
 igs.input_create("r_ign_switch", igs.BOOL_T, None)  # 0 is off, 1 is on
