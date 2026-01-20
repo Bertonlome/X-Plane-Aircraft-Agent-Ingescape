@@ -111,6 +111,8 @@ verbose = False
 is_interrupted = False
 start_heading = None
 joystick_handler = None  # Global joystick handler instance
+reset_time = None  # Track when reset was triggered
+outputs_initialized = False  # Track if outputs have been sent after reset
 
 def signal_handler(signal_received, frame):
     global is_interrupted, joystick_handler
@@ -216,12 +218,15 @@ def int_input_callback(io_type, name, value_type, value, my_data):
         send_dref(exterior_lights_dref, value)
         
 def impulsion_input_callback(io_type, name, value_type, value, my_data):
-    global neverDone
+    global neverDone, reset_time, outputs_initialized
     if name == "reset":
         print("Resetting simulation...")
         neverDone = True
         agent.outside_event_o = ""
         send_comm(load_situation_2_comm)
+        reset_time = time.time()  # Record the time of reset
+        outputs_initialized = False  # Mark that outputs need to be re-initialized
+
     elif name == "gear":
         current_val = get_control_inputs()[4]
         print(f"current val = {current_val}")
@@ -553,9 +558,147 @@ else:
 # ============= End Joystick Integration =============
 
 
+def send_all_outputs():
+    """Send all current output values to initialize the airplane state."""
+    print("Initializing all outputs...")
+    # Force all outputs to be sent by clearing the cached values and re-assigning
+    # This bypasses the equality check in the setters
+    
+    # Store current values
+    output_values = {
+        'airspeed': getattr(agent, '_airspeed_o', None),
+        'pitch': getattr(agent, '_pitch_o', None),
+        'control_pitch': getattr(agent, '_control_pitch_o', None),
+        'roll': getattr(agent, '_roll_o', None),
+        'control_roll': getattr(agent, '_control_roll_o', None),
+        'heading': getattr(agent, '_heading_o', None),
+        'control_yaw': getattr(agent, '_control_yaw_o', None),
+        'vertical_speed': getattr(agent, '_vertical_speed_o', None),
+        'altitude': getattr(agent, '_altitude_o', None),
+        'latitude': getattr(agent, '_latitude_o', None),
+        'longitude': getattr(agent, '_longitude_o', None),
+        'control_throttle': getattr(agent, '_control_throttle_o', None),
+        'control_flaps': getattr(agent, '_control_flaps_o', None),
+        'control_gear': getattr(agent, '_control_gear_o', None),
+        'control_speedbrakes': getattr(agent, '_control_speedbrakes_o', None),
+        'outside_event': getattr(agent, '_outside_event_o', None),
+        'park_brake': getattr(agent, '_park_brake_o', None),
+        'l_throttle': getattr(agent, '_l_throttle_o', None),
+        'r_throttle': getattr(agent, '_r_throttle_o', None),
+        'n1_match_bug': getattr(agent, '_n1_match_bug_o', None),
+        'e1_n1_percent': getattr(agent, '_e1_n1_percent_o', None),
+        'e2_n1_percent': getattr(agent, '_e2_n1_percent_o', None),
+        'slip': getattr(agent, '_slip_o', None),
+        'engine_fire_l': getattr(agent, '_engine_fire_l_o', None),
+        'engine_fire_r': getattr(agent, '_engine_fire_r_o', None),
+        'pax_safety': getattr(agent, '_pax_safety_o', None),
+        'master_warning': getattr(agent, '_master_warning_o', None),
+        'master_caution': getattr(agent, '_master_caution_o', None),
+        'flight_director': getattr(agent, '_flight_director_o', None),
+        'speed_mode': getattr(agent, '_speed_mode_o', None),
+        'heading_mode': getattr(agent, '_heading_mode_o', None),
+        'fuel_boost_l': getattr(agent, '_fuel_boost_l_o', None),
+        'fuel_boost_r': getattr(agent, '_fuel_boost_r_o', None),
+        'test_knob': getattr(agent, '_test_knob_o', None),
+        'autopilot_heading_set': getattr(agent, '_autopilot_heading_set_o', None),
+        'yaw_damper': getattr(agent, '_yaw_damper_o', None),
+        'l_ign_switch': getattr(agent, '_l_ign_switch_o', None),
+        'r_ign_switch': getattr(agent, '_r_ign_switch_o', None),
+        'l_gen_switch': getattr(agent, '_l_gen_switch_o', None),
+        'r_gen_switch': getattr(agent, '_r_gen_switch_o', None),
+        'transfer_knob': getattr(agent, '_transfer_knob_o', None),
+        'baro_setting': getattr(agent, '_baro_setting_o', None),
+        'cabin_altitude': getattr(agent, '_cabin_altitude_o', None),
+        'l_gen_load': getattr(agent, '_l_gen_load_o', None),
+        'r_gen_load': getattr(agent, '_r_gen_load_o', None),
+        'pitot_heat': getattr(agent, '_pitot_heat_o', None),
+        'l_engine_anti_ice': getattr(agent, '_l_engine_anti_ice_o', None),
+        'r_engine_anti_ice': getattr(agent, '_r_engine_anti_ice_o', None),
+        'l_windshield_anti_ice': getattr(agent, '_l_windshield_anti_ice_o', None),
+        'r_windshield_anti_ice': getattr(agent, '_r_windshield_anti_ice_o', None),
+        'exterior_lights': getattr(agent, '_exterior_lights_o', None),
+        'anti_coll_lights': getattr(agent, '_anti_coll_lights_o', None),
+        'trim_rudder': getattr(agent, '_trim_rudder_o', None),
+        'alt_sel': getattr(agent, '_alt_sel_o', None),
+        'heading_sel': getattr(agent, '_heading_sel_o', None),
+        'l_bottle_arm': getattr(agent, '_l_bottle_arm_o', None),
+        'r_bottle_arm': getattr(agent, '_r_bottle_arm_o', None),
+        'ptt': getattr(agent, '_ptt_o', None),
+        'yoke_hide': getattr(agent, '_yoke_hide_o', None),
+    }
+    
+    # Clear all cached values to force setters to send
+    for key in output_values.keys():
+        private_key = '_' + key + '_o'
+        if hasattr(agent, private_key):
+            delattr(agent, private_key)
+    
+    # Re-assign all values, which will trigger the setters to send
+    if output_values['airspeed'] is not None: agent.airspeed_o = output_values['airspeed']
+    if output_values['pitch'] is not None: agent.pitch_o = output_values['pitch']
+    if output_values['control_pitch'] is not None: agent.control_pitch_o = output_values['control_pitch']
+    if output_values['roll'] is not None: agent.roll_o = output_values['roll']
+    if output_values['control_roll'] is not None: agent.control_roll_o = output_values['control_roll']
+    if output_values['heading'] is not None: agent.heading_o = output_values['heading']
+    if output_values['control_yaw'] is not None: agent.control_yaw_o = output_values['control_yaw']
+    if output_values['vertical_speed'] is not None: agent.vertical_speed_o = output_values['vertical_speed']
+    if output_values['altitude'] is not None: agent.altitude_o = output_values['altitude']
+    if output_values['latitude'] is not None: agent.latitude_o = output_values['latitude']
+    if output_values['longitude'] is not None: agent.longitude_o = output_values['longitude']
+    if output_values['control_throttle'] is not None: agent.control_throttle_o = output_values['control_throttle']
+    if output_values['control_flaps'] is not None: agent.control_flaps_o = output_values['control_flaps']
+    if output_values['control_gear'] is not None: agent.control_gear_o = output_values['control_gear']
+    if output_values['control_speedbrakes'] is not None: agent.control_speedbrakes_o = output_values['control_speedbrakes']
+    if output_values['outside_event'] is not None: agent.outside_event_o = output_values['outside_event']
+    if output_values['park_brake'] is not None: agent.park_brake_o = output_values['park_brake']
+    if output_values['l_throttle'] is not None: agent.l_throttle_o = output_values['l_throttle']
+    if output_values['r_throttle'] is not None: agent.r_throttle_o = output_values['r_throttle']
+    if output_values['n1_match_bug'] is not None: agent.n1_match_bug_o = output_values['n1_match_bug']
+    if output_values['e1_n1_percent'] is not None: agent.e1_n1_percent_o = output_values['e1_n1_percent']
+    if output_values['e2_n1_percent'] is not None: agent.e2_n1_percent_o = output_values['e2_n1_percent']
+    if output_values['slip'] is not None: agent.slip_o = output_values['slip']
+    if output_values['engine_fire_l'] is not None: agent.engine_fire_l_o = output_values['engine_fire_l']
+    if output_values['engine_fire_r'] is not None: agent.engine_fire_r_o = output_values['engine_fire_r']
+    if output_values['pax_safety'] is not None: agent.pax_safety_o = output_values['pax_safety']
+    if output_values['master_warning'] is not None: agent.master_warning_o = output_values['master_warning']
+    if output_values['master_caution'] is not None: agent.master_caution_o = output_values['master_caution']
+    if output_values['flight_director'] is not None: agent.flight_director_o = output_values['flight_director']
+    if output_values['speed_mode'] is not None: agent.speed_mode_o = output_values['speed_mode']
+    if output_values['heading_mode'] is not None: agent.heading_mode_o = output_values['heading_mode']
+    if output_values['fuel_boost_l'] is not None: agent.fuel_boost_l_o = output_values['fuel_boost_l']
+    if output_values['fuel_boost_r'] is not None: agent.fuel_boost_r_o = output_values['fuel_boost_r']
+    if output_values['test_knob'] is not None: agent.test_knob_o = output_values['test_knob']
+    if output_values['autopilot_heading_set'] is not None: agent.autopilot_heading_set_o = output_values['autopilot_heading_set']
+    if output_values['yaw_damper'] is not None: agent.yaw_damper_o = output_values['yaw_damper']
+    if output_values['l_ign_switch'] is not None: agent.l_ign_switch_o = output_values['l_ign_switch']
+    if output_values['r_ign_switch'] is not None: agent.r_ign_switch_o = output_values['r_ign_switch']
+    if output_values['l_gen_switch'] is not None: agent.l_gen_switch_o = output_values['l_gen_switch']
+    if output_values['r_gen_switch'] is not None: agent.r_gen_switch_o = output_values['r_gen_switch']
+    if output_values['transfer_knob'] is not None: agent.transfer_knob_o = output_values['transfer_knob']
+    if output_values['baro_setting'] is not None: agent.baro_setting_o = output_values['baro_setting']
+    if output_values['cabin_altitude'] is not None: agent.cabin_altitude_o = output_values['cabin_altitude']
+    if output_values['l_gen_load'] is not None: agent.l_gen_load_o = output_values['l_gen_load']
+    if output_values['r_gen_load'] is not None: agent.r_gen_load_o = output_values['r_gen_load']
+    if output_values['pitot_heat'] is not None: agent.pitot_heat_o = output_values['pitot_heat']
+    if output_values['l_engine_anti_ice'] is not None: agent.l_engine_anti_ice_o = output_values['l_engine_anti_ice']
+    if output_values['r_engine_anti_ice'] is not None: agent.r_engine_anti_ice_o = output_values['r_engine_anti_ice']
+    if output_values['l_windshield_anti_ice'] is not None: agent.l_windshield_anti_ice_o = output_values['l_windshield_anti_ice']
+    if output_values['r_windshield_anti_ice'] is not None: agent.r_windshield_anti_ice_o = output_values['r_windshield_anti_ice']
+    if output_values['exterior_lights'] is not None: agent.exterior_lights_o = output_values['exterior_lights']
+    if output_values['anti_coll_lights'] is not None: agent.anti_coll_lights_o = output_values['anti_coll_lights']
+    if output_values['trim_rudder'] is not None: agent.trim_rudder_o = output_values['trim_rudder']
+    if output_values['alt_sel'] is not None: agent.alt_sel_o = output_values['alt_sel']
+    if output_values['heading_sel'] is not None: agent.heading_sel_o = output_values['heading_sel']
+    if output_values['l_bottle_arm'] is not None: agent.l_bottle_arm_o = output_values['l_bottle_arm']
+    if output_values['r_bottle_arm'] is not None: agent.r_bottle_arm_o = output_values['r_bottle_arm']
+    if output_values['ptt'] is not None: agent.ptt_o = output_values['ptt']
+    if output_values['yoke_hide'] is not None: agent.yoke_hide_o = output_values['yoke_hide']
+    
+    print("All outputs initialized.")
+
 def main(BirdStrikeEnabled=True):
     global is_interrupted
-    global neverDone
+    global neverDone, reset_time, outputs_initialized
     while not is_interrupted:
         try:
             while not is_interrupted:
@@ -638,6 +781,14 @@ def main(BirdStrikeEnabled=True):
                 agent.control_gear_o = gear
                 agent.control_flaps_o = flaps
                 agent.control_speedbrakes_o = speedbrakes
+                
+                # Check if 5 seconds have passed since reset and outputs need initialization
+                if reset_time is not None and not outputs_initialized:
+                    elapsed_time = time.time() - reset_time
+                    if elapsed_time >= 5.0:
+                        send_all_outputs()
+                        outputs_initialized = True
+                        reset_time = None  # Clear reset time
         except Exception as e:
             print(f"An error occurred: {e}")
             print("Retrying in 3 seconds...")
