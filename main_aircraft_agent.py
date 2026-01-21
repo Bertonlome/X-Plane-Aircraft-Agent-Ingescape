@@ -77,7 +77,7 @@ transfer_knob_dref = "Mustang/cockpit/fuel/transfer_knob" # 0 is left, 1 is off 
 baro_setting_dref = "sim/cockpit/misc/barometer_setting"
 cabin_altitude_dref = "sim/cockpit2/pressurization/indicators/cabin_altitude_ft"
 gen_load_dref = "sim/cockpit2/electrical/generator_amps" # [0.0, 0.0] first means L generator, second means R generator
-pitot_heat_dref = "sim/cockpit/switches/pitot_heat_on" # 0 is off, 1 is on
+pitot_heat_dref = "Mustang/cockpit/misc/reset_stall_warnings" # 0 is off, 1 is on
 anti_ice_engine_dref = "sim/cockpit/switches/anti_ice_engine_air" # [0,0,0,0,0,0,0,0] # first means L engine, second means R engine
 l_windshield_anti_ice_dref = "Mustang/cockpit/ai/l_windsheild" # 0 is off, 1 is on
 r_windshield_anti_ice_dref = "Mustang/cockpit/ai/r_windsheild" # 0 is off, 1 is on
@@ -142,9 +142,11 @@ def bool_input_callback(io_type, name, value_type, value, my_data):
     elif name == "pitot_heat":
         send_dref(pitot_heat_dref, value)
     elif name == "l_engine_anti_ice":
-        send_dref(anti_ice_engine_dref, [int(value), get_dref(anti_ice_engine_dref)[1]])
+        current_values = get_dref(anti_ice_engine_dref)
+        send_dref(anti_ice_engine_dref, [int(value), current_values[1], 0, 0, 0, 0, 0, 0])
     elif name == "r_engine_anti_ice":
-        send_dref(anti_ice_engine_dref, [get_dref(anti_ice_engine_dref)[0], int(value)])
+        current_values = get_dref(anti_ice_engine_dref)
+        send_dref(anti_ice_engine_dref, [current_values[0], int(value), 0, 0, 0, 0, 0, 0])
     elif name == "l_windshield_anti_ice":
         send_dref(l_windshield_anti_ice_dref, int(value))
     elif name == "r_windshield_anti_ice":
