@@ -84,11 +84,13 @@ r_windshield_anti_ice_dref = "Mustang/cockpit/ai/r_windsheild" # 0 is off, 1 is 
 exterior_lights_dref = "Mustang/cockpit/lighting/taxi_landing" # 0 is off, 1 is taxi, 2 is landing
 anti_coll_lights_dref = "sim/cockpit/electrical/strobe_lights_on" # 0 is off, 1 is on
 load_situation_2_comm = "sim/operation/load_situation_2" 
+load_situation_1_comm = "sim/operation/load_situation_1" 
 botle_r_arm_dref = "Mustang/cockpit/bottle_r_arm_b" # 0 is off, 1 is on
 botle_l_arm_dref = "Mustang/cockpit/bottle_l_arm_b" # 0 is off, 1 is on
 l_cutoff_dref = "Mustang/cockpit/engine/l_cutoff"
 r_cutoff_dref = "Mustang/cockpit/engine/r_cutoff"
 yoke_hide_dref = "Mustang/cockpit/yoke_hide" # 0 is show, 1 is hide
+speed_brake_dref = "sim/cockpit2/controls/speedbrake_ratio"
 
 """
 		a.observeInput("alarm", agentCB);
@@ -224,8 +226,8 @@ def impulsion_input_callback(io_type, name, value_type, value, my_data):
     if name == "reset":
         print("Resetting simulation...")
         neverDone = True
-        agent.outside_event_o = ""
-        send_comm(load_situation_2_comm)
+        agent.outside_event_o = "RESET"
+        send_comm(load_situation_1_comm)
         reset_time = time.time()  # Record the time of reset
         outputs_initialized = False  # Mark that outputs need to be re-initialized
 
@@ -565,6 +567,21 @@ def send_all_outputs():
     print("Initializing all outputs...")
     # Force all outputs to be sent by clearing the cached values and re-assigning
     # This bypasses the equality check in the setters
+    send_dref(speed_brake_dref, 0)  # Ensure speedbrakes are re-initialized
+    time.sleep(refresh_rate)
+    send_dref(pitot_heat_dref, 0)  # Ensure pitot heat is re-initialized
+    time.sleep(refresh_rate)
+    send_dref(anti_ice_engine_dref, [0, 0, 0, 0, 0, 0, 0, 0])  # Ensure anti-ice is re-initialized
+    time.sleep(refresh_rate)
+    send_dref(l_windshield_anti_ice_dref, 0)  # Ensure windshield anti-ice is re-initialized
+    time.sleep(refresh_rate)
+    send_dref(r_windshield_anti_ice_dref, 0)  # Ensure windshield anti-ice is re-initialized
+    time.sleep(refresh_rate)
+    send_dref(anti_coll_lights_dref, 0)  # Ensure anti-collision lights are re-initialized
+    time.sleep(refresh_rate)
+    send_dref(exterior_lights_dref, 0)  # Ensure exterior lights are re-initialized
+    time.sleep(refresh_rate)
+    
     
     # Store current values
     output_values = {
