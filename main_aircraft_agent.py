@@ -569,7 +569,7 @@ def send_all_outputs():
     # This bypasses the equality check in the setters
     send_dref(speed_brake_dref, 0)  # Ensure speedbrakes are re-initialized
     time.sleep(refresh_rate)
-    send_dref(pitot_heat_dref, 0)  # Ensure pitot heat is re-initialized
+    #send_dref(pitot_heat_dref, 0)  # Ensure pitot heat is re-initialized
     time.sleep(refresh_rate)
     send_dref(anti_ice_engine_dref, [0, 0, 0, 0, 0, 0, 0, 0])  # Ensure anti-ice is re-initialized
     time.sleep(refresh_rate)
@@ -801,10 +801,10 @@ def main(BirdStrikeEnabled=True):
                 agent.control_flaps_o = flaps
                 agent.control_speedbrakes_o = speedbrakes
                 
-                # Check if 5 seconds have passed since reset and outputs need initialization
+                # Check if 2 seconds have passed since reset and outputs need initialization
                 if reset_time is not None and not outputs_initialized:
                     elapsed_time = time.time() - reset_time
-                    if elapsed_time >= 5.0:
+                    if elapsed_time >= 1.0:
                         send_all_outputs()
                         outputs_initialized = True
                         reset_time = None  # Clear reset time
