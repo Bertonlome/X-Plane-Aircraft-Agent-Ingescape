@@ -97,6 +97,8 @@ class Echo(metaclass=Singleton):
         self.l_bottle_arm_o = None
         self.r_bottle_arm_o = None
         self.ptt_o = None
+        self.check_o = None
+        self.approve_o = None
         self.yoke_hide_o = None
 
     @property
@@ -754,6 +756,25 @@ class Echo(metaclass=Singleton):
         if self._ptt_o is not None:
             igs.output_set_bool("ptt", self._ptt_o)
 
+    @property
+    def check_o(self):
+        return self._check_o
+    @check_o.setter
+    def check_o(self, value):
+        # For impulsions, just trigger when set
+        self._check_o = value
+        if self._check_o is not None:
+            igs.output_set_impulsion("check")
+
+    @property
+    def approve_o(self):
+        return self._approve_o
+    @approve_o.setter
+    def approve_o(self, value):
+        # For impulsions, just trigger when set
+        self._approve_o = value
+        if self._approve_o is not None:
+            igs.output_set_impulsion("approve")
             
     @property
     def yoke_hide_o(self):

@@ -22,19 +22,94 @@ class JoystickHandler:
     Detects button presses and axis movements and triggers registered callbacks.
     """
     
-    def __init__(self, joystick_index: int = 0, polling_rate: float = 0.05):
+    @staticmethod
+    def list_available_joysticks() -> list:
+        """
+        List all available joysticks connected to the system.
+        
+        Returns:
+            List of tuples containing (index, name) for each joystick
+        """
+        if pygame is None:
+            print("ERROR: pygame is not installed. Cannot list joysticks.")
+            return []
+        
+        try:
+            pygame.init()
+            pygame.joystick.init()
+            
+            joystick_count = pygame.joystick.get_count()
+            joysticks = []
+            
+            print(f"\n=== Found {joystick_count} joystick(s) ===")
+            for i in range(joystick_count):
+                joy = pygame.joystick.Joystick(i)
+                joy.init()
+                name = joy.get_name()
+                joysticks.append((i, name))
+                print(f"  [{i}] {name}")
+                joy.quit()
+            print("=" * 40 + "\n")
+            
+            return joysticks
+            
+        except Exception as e:
+            print(f"Error listing joysticks: {e}")
+            return []
+    
+    @staticmethod
+    def find_joystick_by_name(name_pattern: str, occurrence: int = 0) -> Optional[int]:
+        """
+        Find a joystick by name (case-insensitive partial match).
+        
+        Args:
+            name_pattern: String to search for in joystick names
+            occurrence: Which occurrence to return (0=first, 1=second, etc.)
+            
+        Returns:
+            Index of the matching joystick, or None if not found
+        """
+        joysticks = JoystickHandler.list_available_joysticks()
+        name_pattern_lower = name_pattern.lower()
+        matches = []
+        
+        for index, name in joysticks:
+            if name_pattern_lower in name.lower():
+                matches.append((index, name))
+        
+        if not matches:
+            print(f"No joystick found matching '{name_pattern}'")
+            return None
+        
+        if len(matches) > 1:
+            print(f"\nFound {len(matches)} joysticks matching '{name_pattern}':")
+            for idx, (index, name) in enumerate(matches):
+                print(f"  Occurrence {idx}: [{index}] {name}")
+        
+        if occurrence >= len(matches):
+            print(f"Occurrence {occurrence} requested but only {len(matches)} match(es) found")
+            occurrence = 0
+        
+        selected_index, selected_name = matches[occurrence]
+        print(f"Selected: [{selected_index}] {selected_name} (occurrence {occurrence})")
+        return selected_index
+    
+    def __init__(self, joystick_index: int = 0, polling_rate: float = 0.05, debug: bool = False):
         """
         Initialize the joystick handler.
         
         Args:
             joystick_index: Index of the joystick to monitor (default: 0 for first joystick)
             polling_rate: How often to poll the joystick in seconds (default: 0.05 = 20Hz)
+            debug: Enable debug output to troubleshoot polling issues
         """
         self.joystick_index = joystick_index
         self.polling_rate = polling_rate
         self.joystick = None
         self.is_running = False
         self.thread = None
+        self.debug = debug
+        self.poll_count = 0
         
         # Callback dictionaries
         self.button_callbacks: Dict[int, Callable] = {}
@@ -134,18 +209,33 @@ class JoystickHandler:
     
     def _poll_joystick(self):
         """Internal method to poll the joystick continuously."""
+        if self.debug:
+            print("[DEBUG] Joystick polling thread started")
+        
         while self.is_running:
             try:
                 # Process pygame events to update joystick state
                 pygame.event.pump()
+                
+                self.poll_count += 1
+                
+                # Debug output every 100 polls (~1-2 seconds depending on polling_rate)
+                if self.debug and self.poll_count % 100 == 0:
+                    print(f"[DEBUG] Poll #{self.poll_count} - Checking {self.joystick.get_numbuttons()} buttons...")
                 
                 # Check buttons
                 for button_index in range(self.joystick.get_numbuttons()):
                     current_state = self.joystick.get_button(button_index)
                     previous_state = self.button_states.get(button_index, False)
                     
+                    # Debug: show any button that is pressed
+                    if self.debug and current_state:
+                        print(f"[DEBUG] Button {button_index} is currently pressed (state={current_state})")
+                    
                     # Button press detection
                     if current_state and not previous_state:
+                        if self.debug:
+                            print(f"[DEBUG] Button {button_index} press detected, calling callback...")
                         if button_index in self.button_callbacks:
                             try:
                                 self.button_callbacks[button_index]()
@@ -154,6 +244,8 @@ class JoystickHandler:
                     
                     # Button release detection
                     elif not current_state and previous_state:
+                        if self.debug:
+                            print(f"[DEBUG] Button {button_index} release detected, calling callback...")
                         if button_index in self.button_release_callbacks:
                             try:
                                 self.button_release_callbacks[button_index]()

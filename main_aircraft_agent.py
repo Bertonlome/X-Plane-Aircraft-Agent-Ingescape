@@ -13,8 +13,14 @@ from echo_aircraft_agent import *
 import time
 import xpc
 import signal
+import threading
 from collections import Counter
 from joystick_handler import JoystickHandler
+
+# ============= Configuration =============
+JOYSTICK_VERBOSE = False  # Set to True to see detailed joystick button press/release logs
+PTT_LONG_PRESS_TIME = 0.5  # Time in seconds to hold button for PTT activation
+# =========================================
 
 neverDone = True
 
@@ -108,7 +114,7 @@ speed_brake_dref = "sim/cockpit2/controls/speedbrake_ratio"
 refresh_rate = 0.01
 port = 5670
 agent_name = "Aircraft"
-device = "A7500_NETGEAR"
+device = "Ethernet"
 verbose = False
 is_interrupted = False
 start_heading = None
@@ -485,6 +491,8 @@ igs.output_create("heading_sel", igs.INTEGER_T, None)
 igs.output_create("l_bottle_arm", igs.BOOL_T, None)  # 0 is off, 1 is on
 igs.output_create("r_bottle_arm", igs.BOOL_T, None)  # 0 is off, 1 is on
 igs.output_create("ptt", igs.BOOL_T, None)  # Push-to-talk button
+igs.output_create("check", igs.IMPULSION_T, None)  # Smart button double-click
+igs.output_create("approve", igs.IMPULSION_T, None)  # Smart button triple-click
 igs.output_create("yoke_hide", igs.BOOL_T, None)  # 0 is show, 1 is hide
 
 igs.observe_input("reset", impulsion_input_callback, None)
@@ -536,26 +544,176 @@ igs.start_with_device(device, port)
 signal.signal(signal.SIGINT, signal_handler)
 
 # ============= Joystick Integration =============
-def on_joystick_trigger_press():
-    """Called when joystick trigger is pressed."""
-    print("Joystick trigger pressed - PTT activated")
-    # You can add custom actions here, for example:
-    send_dref(ptt_dref, 1)  # Activate PTT
-    # Or trigger any other X-Plane action
+# Button name mapping for better readability
+BUTTON_NAMES = {
+    0: "Button 0",
+    1: "Button 1",
+    2: "Button 2", 
+    3: "Button 3",
+    4: "Button 4",
+    5: "Button 5 (Smart)",
+    6: "Button 6"
+}
 
-def on_joystick_trigger_release():
-    """Called when joystick trigger is released."""
-    print("Joystick trigger released - PTT deactivated")
-    # You can add custom actions here, for example:
+# Button 5 Smart Handler - Detects double-click, triple-click, and long press
+class Button5Handler:
+    """Special handler for Button 5 with multi-click and long press detection."""
+    
+    def __init__(self):
+        self.click_times = []
+        self.press_start_time = None
+        self.is_ptt_active = False
+        self.long_press_timer = None
+        
+        # Timing thresholds
+        self.double_click_window = 0.6  # Max time between clicks for double/triple click (seconds)
+        self.long_press_threshold = PTT_LONG_PRESS_TIME  # Min time for long press to activate PTT (seconds)
+        self.click_release_max = 0.3    # Max duration for a click (vs long press)
+    
+    def on_press(self):
+        """Called when Button 5 is pressed."""
+        self.press_start_time = time.time()
+        if JOYSTICK_VERBOSE:
+            print(f"[JOYSTICK] Button 5 (#5) - PRESSED")
+        
+        # Start timer to activate PTT if button is held long enough
+        self.long_press_timer = threading.Timer(self.long_press_threshold, self._activate_ptt)
+        self.long_press_timer.start()
+    
+    def on_release(self):
+        """Called when Button 5 is released."""
+        if JOYSTICK_VERBOSE:
+            print(f"[JOYSTICK] Button 5 (#5) - RELEASED")
+        
+        # Cancel long press timer if still pending
+        if self.long_press_timer:
+            self.long_press_timer.cancel()
+            self.long_press_timer = None
+        
+        if self.press_start_time is None:
+            return
+        
+        press_duration = time.time() - self.press_start_time
+        self.press_start_time = None
+        
+        # If PTT was activated, deactivate it on release
+        if self.is_ptt_active:
+            print("🎙️  PTT - DEACTIVATED")
+            igs.output_set_bool("ptt", False)
+            self.is_ptt_active = False
+            return
+        
+        # This was a quick click - track it for multi-click detection
+        if press_duration <= self.click_release_max:
+            current_time = time.time()
+            
+            # Clean up old clicks outside the time window
+            self.click_times = [t for t in self.click_times 
+                               if current_time - t < self.double_click_window]
+            
+            # Add this click
+            self.click_times.append(current_time)
+            
+            # Schedule detection after the window expires
+            threading.Timer(self.double_click_window, self._detect_multi_click).start()
+    
+    def _activate_ptt(self):
+        """Activate PTT after button has been held for long_press_threshold."""
+        if self.press_start_time is not None:  # Button still held
+            print("🎙️  PTT - ACTIVATED (long press detected)")
+            igs.output_set_bool("ptt", True)
+            self.is_ptt_active = True
+    
+    def _detect_multi_click(self):
+        """Detect and handle multi-click patterns after the window expires."""
+        click_count = len(self.click_times)
+        
+        if click_count == 2:
+            print("✓✓ CHECKED (double-click detected)")
+            igs.output_set_impulsion("check")
+        elif click_count >= 3:
+            print("✓✓✓ APPROVE (triple-click detected)")
+            igs.output_set_impulsion("approve")
+        # Single click - do nothing special
+        
+        # Clear the click history
+        self.click_times = []
+
+# Create Button 5 handler instance
+button5_handler = Button5Handler()
+
+def create_button_press_handler(button_num):
+    """Factory function to create button press handlers."""
+    def handler():
+        if JOYSTICK_VERBOSE:
+            button_name = BUTTON_NAMES.get(button_num, f"Button {button_num}")
+            print(f"[JOYSTICK] {button_name} (#{button_num}) - PRESSED")
+    return handler
+
+def create_button_release_handler(button_num):
+    """Factory function to create button release handlers."""
+    def handler():
+        if JOYSTICK_VERBOSE:
+            button_name = BUTTON_NAMES.get(button_num, f"Button {button_num}")
+            print(f"[JOYSTICK] {button_name} (#{button_num}) - RELEASED")
+    return handler
+
+def on_axis_change(axis_num, value):
+    """Handler for axis movements."""
+    if JOYSTICK_VERBOSE:
+        print(f"[JOYSTICK] Axis {axis_num} - Value: {value:.3f}")
+
+
+def on_hat_change(hat_num, position):
+    """Handler for hat/D-pad movements."""
+    if JOYSTICK_VERBOSE:
+        print(f"[JOYSTICK] Hat {hat_num} - Position: {position}")
+
 # Initialize and start joystick monitoring
-joystick_handler = JoystickHandler(joystick_index=0, polling_rate=0.01)
+# First, list all available joysticks
+print("\n" + "="*50)
+print("Scanning for available HID devices (joysticks)...")
+print("="*50)
+JoystickHandler.list_available_joysticks()
+
+# Try to find the "yoko+" joystick (second occurrence if there are multiple)
+joystick_index = JoystickHandler.find_joystick_by_name("yoko+", occurrence=1)
+if joystick_index is None:
+    print("'yoko+' joystick not found, trying first occurrence...")
+    joystick_index = JoystickHandler.find_joystick_by_name("yoko+", occurrence=0)
+    if joystick_index is None:
+        print("No YOKO+ found, using first available joystick (index 0)")
+        joystick_index = 0
+
+# Disable debug mode for cleaner output
+joystick_handler = JoystickHandler(joystick_index=joystick_index, polling_rate=0.01, debug=False)
 if joystick_handler.initialize():
-    # Register button callbacks
-    joystick_handler.register_button_press(0, on_joystick_trigger_press)      # Trigger button
-    joystick_handler.register_button_release(0, on_joystick_trigger_release)  # Trigger release
+    # Get joystick info to determine how many buttons/axes/hats it has
+    joy_info = joystick_handler.get_joystick_info()
+    
+    # Register callbacks for all buttons
+    print(f"\nRegistering callbacks for {joy_info['num_buttons']} buttons...")
+    for button_num in range(joy_info['num_buttons']):
+        # Use special handler for Button 5
+        if button_num == 5:
+            joystick_handler.register_button_press(button_num, button5_handler.on_press)
+            joystick_handler.register_button_release(button_num, button5_handler.on_release)
+        else:
+            joystick_handler.register_button_press(button_num, create_button_press_handler(button_num))
+            joystick_handler.register_button_release(button_num, create_button_release_handler(button_num))
+    
+    # Optional: Register axis callbacks (uncomment if you want to see axis movements)
+    # for axis_num in range(joy_info['num_axes']):
+    #     joystick_handler.register_axis_change(axis_num, lambda val, num=axis_num: on_axis_change(num, val), threshold=0.1)
+    
+    # Optional: Register hat callbacks (uncomment if you want to see hat movements)
+    # for hat_num in range(joy_info['num_hats']):
+    #     joystick_handler.register_hat_change(hat_num, lambda pos, num=hat_num: on_hat_change(num, pos))
+    
     # Start monitoring in background thread
     joystick_handler.start()
     print("Joystick integration enabled and running in parallel with X-Plane control.")
+    print("Press any button to see its name and state!\n")
 else:
     print("Joystick not available - continuing without joystick integration.")
     joystick_handler = None
