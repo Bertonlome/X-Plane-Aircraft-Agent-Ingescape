@@ -91,6 +91,7 @@ l_cutoff_dref = "Mustang/cockpit/engine/l_cutoff"
 r_cutoff_dref = "Mustang/cockpit/engine/r_cutoff"
 yoke_hide_dref = "Mustang/cockpit/yoke_hide" # 0 is show, 1 is hide
 speed_brake_dref = "sim/cockpit2/controls/speedbrake_ratio"
+autopilot_airspeed_dref = "sim/cockpit/autopilot/airspeed" # airspeed set in the autopilot
 
 """
 		a.observeInput("alarm", agentCB);
@@ -257,6 +258,10 @@ def impulsion_input_callback(io_type, name, value_type, value, my_data):
         send_comm(heading_mode_comm)
     elif name == "autopilot_master":
         send_comm(autopilot_master_comm)
+    elif name == "nose_down":
+        send_comm(vertical_speed_down_comm)
+    elif name == "nose_up":
+        send_comm(vertical_speed_up_comm)
 
 def get_dref(arg, is_double=False):
     try:
@@ -426,6 +431,8 @@ igs.input_create("trim_rudder", igs.DOUBLE_T, None)
 igs.input_create("l_bottle_arm", igs.BOOL_T, None)  # 0 is off, 1 is on
 igs.input_create("r_bottle_arm", igs.BOOL_T, None)  # 0 is off, 1 is on
 igs.input_create("yoke_hide", igs.BOOL_T, None)  # 0 is show, 1 is hide
+igs.input_create("nose_down", igs.IMPULSION_T, None)
+igs.input_create("nose_up", igs.IMPULSION_T, None)
 
 igs.output_create("airspeed", igs.DOUBLE_T, None)
 igs.output_create("pitch", igs.DOUBLE_T, None)
@@ -486,6 +493,7 @@ igs.output_create("l_bottle_arm", igs.BOOL_T, None)  # 0 is off, 1 is on
 igs.output_create("r_bottle_arm", igs.BOOL_T, None)  # 0 is off, 1 is on
 igs.output_create("ptt", igs.BOOL_T, None)  # Push-to-talk button
 igs.output_create("yoke_hide", igs.BOOL_T, None)  # 0 is show, 1 is hide
+igs.output_create("autopilot_airspeed", igs.DOUBLE_T, None)  # airspeed set in the autopilot
 
 igs.observe_input("reset", impulsion_input_callback, None)
 igs.observe_input("elevator", double_input_callback, None)
@@ -527,6 +535,8 @@ igs.observe_input("heading_sel", int_input_callback, None)
 igs.observe_input("l_bottle_arm", bool_input_callback, None)  # 0 is off, 1 is on
 igs.observe_input("r_bottle_arm", bool_input_callback, None)  # 0 is off, 1 is on
 igs.observe_input("yoke_hide", bool_input_callback, None)  # 0 is show, 1 is hide
+igs.observe_input("nose_down", impulsion_input_callback, None)
+igs.observe_input("nose_up", impulsion_input_callback, None)
 
 igs.log_set_console(True)
 igs.log_set_console_level(igs.LOG_INFO)
@@ -644,6 +654,7 @@ def send_all_outputs():
         'r_bottle_arm': getattr(agent, '_r_bottle_arm_o', None),
         'ptt': getattr(agent, '_ptt_o', None),
         'yoke_hide': getattr(agent, '_yoke_hide_o', None),
+        'autopilot_airspeed': getattr(agent, '_autopilot_airspeed_o', None),
     }
     
     # Clear all cached values to force setters to send
@@ -712,6 +723,7 @@ def send_all_outputs():
     if output_values['r_bottle_arm'] is not None: agent.r_bottle_arm_o = output_values['r_bottle_arm']
     if output_values['ptt'] is not None: agent.ptt_o = output_values['ptt']
     if output_values['yoke_hide'] is not None: agent.yoke_hide_o = output_values['yoke_hide']
+    if output_values['autopilot_airspeed'] is not None: agent.autopilot_airspeed_o = output_values['autopilot_airspeed']
     
     print("All outputs initialized.")
 
@@ -723,7 +735,7 @@ def main(BirdStrikeEnabled=True):
             while not is_interrupted:
                 time.sleep(refresh_rate)
 
-                airspeed, vert_speed, park_brake, mustang_l_throttle, mustang_r_throttle, n1_match_bug, n1_percent, slip, engine_fires, pax_safety, master_warning, master_caution, flight_director, speed_mode, heading_mode, fuel_boost_l, fuel_boost_r, test_knob, autopilot_heading_set, yaw_damper, l_ign_switch, r_ign_switch, l_gen_switch, r_gen_switch, transfer_knob, baro_setting, cabin_altitude, gen_load, pitot_heat, l_windshield_anti_ice, r_windshield_anti_ice, exterior_lights, anti_coll_lights, engine_anti_ice, trim_rudder, alt_sel, heading_sel, l_bottle_arm, r_bottle_arm, ptt, yoke_hide = get_drefs([ias_dref, verticalSpeed_dref, parkBrake_dref, mustang_l_throttle_dref, mustang_r_throttle_dref, n1_match_bug_dref, n1_percent_dref, slip_dref, engine_fires_dref, pax_safety_dref, master_warning_dref, master_caution_dref, flight_director_dref, speed_mode_dref, heading_mode_dref, fuel_boost_l_dref, fuel_boost_r_dref, test_knob_dref, heading_sel_dref, yaw_damper_dref, l_ign_switch_dref, r_ign_switch_dref, l_gen_switch_dref, r_gen_switch_dref, transfer_knob_dref, baro_setting_dref, cabin_altitude_dref, gen_load_dref, pitot_heat_dref, l_windshield_anti_ice_dref, r_windshield_anti_ice_dref, exterior_lights_dref, anti_coll_lights_dref, anti_ice_engine_dref, trim_rudder_dref, alt_sel_dref, heading_sel_dref, botle_l_arm_dref, botle_r_arm_dref, ptt_dref, yoke_hide_dref])
+                airspeed, vert_speed, park_brake, mustang_l_throttle, mustang_r_throttle, n1_match_bug, n1_percent, slip, engine_fires, pax_safety, master_warning, master_caution, flight_director, speed_mode, heading_mode, fuel_boost_l, fuel_boost_r, test_knob, autopilot_heading_set, yaw_damper, l_ign_switch, r_ign_switch, l_gen_switch, r_gen_switch, transfer_knob, baro_setting, cabin_altitude, gen_load, pitot_heat, l_windshield_anti_ice, r_windshield_anti_ice, exterior_lights, anti_coll_lights, engine_anti_ice, trim_rudder, alt_sel, heading_sel, l_bottle_arm, r_bottle_arm, ptt, yoke_hide, autopilot_airspeed = get_drefs([ias_dref, verticalSpeed_dref, parkBrake_dref, mustang_l_throttle_dref, mustang_r_throttle_dref, n1_match_bug_dref, n1_percent_dref, slip_dref, engine_fires_dref, pax_safety_dref, master_warning_dref, master_caution_dref, flight_director_dref, speed_mode_dref, heading_mode_dref, fuel_boost_l_dref, fuel_boost_r_dref, test_knob_dref, heading_sel_dref, yaw_damper_dref, l_ign_switch_dref, r_ign_switch_dref, l_gen_switch_dref, r_gen_switch_dref, transfer_knob_dref, baro_setting_dref, cabin_altitude_dref, gen_load_dref, pitot_heat_dref, l_windshield_anti_ice_dref, r_windshield_anti_ice_dref, exterior_lights_dref, anti_coll_lights_dref, anti_ice_engine_dref, trim_rudder_dref, alt_sel_dref, heading_sel_dref, botle_l_arm_dref, botle_r_arm_dref, ptt_dref, yoke_hide_dref, autopilot_airspeed_dref])
 
                 agent.airspeed_o = airspeed[0]
                 
@@ -790,6 +802,7 @@ def main(BirdStrikeEnabled=True):
                 agent.latitude_o = lat
                 agent.longitude_o = long
                 agent.yoke_hide_o = bool(yoke_hide[0])
+                agent.autopilot_airspeed_o = autopilot_airspeed[0]
 
                 time.sleep(refresh_rate)
                 aileron, elevator, rudder, throttle, gear, flaps, speedbrakes = get_control_inputs()
