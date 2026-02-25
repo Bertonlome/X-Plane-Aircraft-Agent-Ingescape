@@ -8,6 +8,7 @@
 #
 
 import sys
+import os
 import ingescape as igs
 from echo_aircraft_agent import *
 import time
@@ -18,8 +19,13 @@ from collections import Counter
 from joystick_handler import JoystickHandler
 
 # ============= Configuration =============
-JOYSTICK_VERBOSE = False  # Set to True to see detailed joystick button press/release logs
+JOYSTICK_VERBOSE = True  # Set to True to see detailed joystick button press/release logs
 PTT_LONG_PRESS_TIME = 0.5  # Time in seconds to hold button for PTT activation
+CLICK_SOUND_VOLUME = 1.0  # Volume for the click sound (0.0 = silent, 1.0 = full volume)
+# Joystick-specific smart button index (button with PTT/check/approve logic)
+# Yoko+ uses button 5; Extreme 3D Pro uses button 0 (trigger)
+YOKO_SMART_BUTTON = 5
+EXTREME3D_SMART_BUTTON = 0
 # =========================================
 
 neverDone = True
@@ -554,6 +560,20 @@ igs.start_with_device(device, port)
 signal.signal(signal.SIGINT, signal_handler)
 
 # ============= Joystick Integration =============
+# Pre-load click sound for low-latency playback on button press
+# Small buffer (512) minimises audio latency compared to the default (2048+)
+try:
+    import pygame.mixer
+    pygame.mixer.pre_init(44100, -16, 1, 512)
+    pygame.mixer.init()
+    _sound_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sound", "click.mp3")
+    click_sound = pygame.mixer.Sound(_sound_path)
+    click_sound.set_volume(CLICK_SOUND_VOLUME)
+    print(f"Click sound loaded: {_sound_path}")
+except Exception as e:
+    click_sound = None
+    print(f"Warning: could not load click sound: {e}")
+
 # Button name mapping for better readability
 BUTTON_NAMES = {
     0: "Button 0",
@@ -582,6 +602,9 @@ class Button5Handler:
     
     def on_press(self):
         """Called when Button 5 is pressed."""
+        # Play click sound immediately for tactile feedback (pre-loaded, minimal latency)
+        if click_sound:
+            click_sound.play()
         self.press_start_time = time.time()
         if JOYSTICK_VERBOSE:
             print(f"[JOYSTICK] Button 5 (#5) - PRESSED")
@@ -688,12 +711,21 @@ JoystickHandler.list_available_joysticks()
 
 # Try to find the "yoko+" joystick (second occurrence if there are multiple)
 joystick_index = JoystickHandler.find_joystick_by_name("yoko+", occurrence=1)
+using_yoko = joystick_index is not None
 if joystick_index is None:
     print("'yoko+' joystick not found, trying first occurrence...")
     joystick_index = JoystickHandler.find_joystick_by_name("yoko+", occurrence=0)
+    using_yoko = joystick_index is not None
     if joystick_index is None:
-        print("No YOKO+ found, using first available joystick (index 0)")
-        joystick_index = 0
+        print("No YOKO+ found, checking for Extreme 3D Pro...")
+        joystick_index = JoystickHandler.find_joystick_by_name("extreme", occurrence=0)
+        if joystick_index is None:
+            print("No Extreme 3D Pro found, using first available joystick (index 0)")
+            joystick_index = 0
+
+# Determine which button gets the smart PTT/check/approve handler
+smart_button = YOKO_SMART_BUTTON if using_yoko else EXTREME3D_SMART_BUTTON
+print(f"Using smart button index: {smart_button} ({'Yoko+' if using_yoko else 'Extreme 3D Pro / fallback'})")
 
 # Disable debug mode for cleaner output
 joystick_handler = JoystickHandler(joystick_index=joystick_index, polling_rate=0.01, debug=False)
@@ -704,8 +736,9 @@ if joystick_handler.initialize():
     # Register callbacks for all buttons
     print(f"\nRegistering callbacks for {joy_info['num_buttons']} buttons...")
     for button_num in range(joy_info['num_buttons']):
-        # Use special handler for Button 5
-        if button_num == 5:
+        # Use special handler for the smart button (PTT / check / approve)
+        if button_num == smart_button:
+            print(f"  Button {button_num} -> Smart handler (PTT/check/approve)")
             joystick_handler.register_button_press(button_num, button5_handler.on_press)
             joystick_handler.register_button_release(button_num, button5_handler.on_release)
         else:
