@@ -8,6 +8,7 @@
 #
 
 import sys
+import os
 import ingescape as igs
 from echo_aircraft_agent import *
 import time
@@ -18,8 +19,13 @@ from collections import Counter
 from joystick_handler import JoystickHandler
 
 # ============= Configuration =============
-JOYSTICK_VERBOSE = False  # Set to True to see detailed joystick button press/release logs
+JOYSTICK_VERBOSE = True  # Set to True to see detailed joystick button press/release logs
 PTT_LONG_PRESS_TIME = 0.5  # Time in seconds to hold button for PTT activation
+CLICK_SOUND_VOLUME = 1.0  # Volume for the click sound (0.0 = silent, 1.0 = full volume)
+# Joystick-specific smart button index (button with PTT/check/approve logic)
+# Yoko+ uses button 5; Extreme 3D Pro uses button 0 (trigger)
+YOKO_SMART_BUTTON = 5
+EXTREME3D_SMART_BUTTON = 0
 # =========================================
 
 neverDone = True
@@ -99,6 +105,7 @@ l_cutoff_dref = "Mustang/cockpit/engine/l_cutoff"
 r_cutoff_dref = "Mustang/cockpit/engine/r_cutoff"
 yoke_hide_dref = "Mustang/cockpit/yoke_hide" # 0 is show, 1 is hide
 speed_brake_dref = "sim/cockpit2/controls/speedbrake_ratio"
+autopilot_airspeed_dref = "sim/cockpit/autopilot/airspeed" # airspeed set in the autopilot
 
 """
 		a.observeInput("alarm", agentCB);
@@ -267,6 +274,10 @@ def impulsion_input_callback(io_type, name, value_type, value, my_data):
         send_dref(botle_l_arm_dref, int(1))
     elif name == "r_bottle_arm":
         send_dref(botle_r_arm_dref, int(1))
+    elif name == "nose_down":
+        send_comm(vertical_speed_down_comm)
+    elif name == "nose_up":
+        send_comm(vertical_speed_up_comm)
 
 def get_dref(arg, is_double=False):
     try:
@@ -439,6 +450,8 @@ igs.input_create("trim_rudder", igs.DOUBLE_T, None)
 igs.input_create("l_bottle_arm", igs.IMPULSION_T, None)  # 0 is off, 1 is on
 igs.input_create("r_bottle_arm", igs.IMPULSION_T, None)  # 0 is off, 1 is on
 igs.input_create("yoke_hide", igs.BOOL_T, None)  # 0 is show, 1 is hide
+igs.input_create("nose_down", igs.IMPULSION_T, None)
+igs.input_create("nose_up", igs.IMPULSION_T, None)
 
 igs.output_create("airspeed", igs.DOUBLE_T, None)
 igs.output_create("pitch", igs.DOUBLE_T, None)
@@ -501,6 +514,7 @@ igs.output_create("ptt", igs.BOOL_T, None)  # Push-to-talk button
 igs.output_create("check", igs.IMPULSION_T, None)  # Smart button double-click
 igs.output_create("approve", igs.BOOL_T, None)  # Smart button triple-click
 igs.output_create("yoke_hide", igs.BOOL_T, None)  # 0 is show, 1 is hide
+igs.output_create("autopilot_airspeed", igs.DOUBLE_T, None)  # airspeed set in the autopilot
 
 igs.observe_input("On_Off", bool_input_callback, None)  # Observe On_Off toggle
 igs.observe_input("reset", impulsion_input_callback, None)
@@ -545,6 +559,8 @@ igs.observe_input("heading_sel", int_input_callback, None)
 igs.observe_input("l_bottle_arm", impulsion_input_callback, None)  # 0 is off, 1 is on
 igs.observe_input("r_bottle_arm", impulsion_input_callback, None)  # 0 is off, 1 is on
 igs.observe_input("yoke_hide", bool_input_callback, None)  # 0 is show, 1 is hide
+igs.observe_input("nose_down", impulsion_input_callback, None)
+igs.observe_input("nose_up", impulsion_input_callback, None)
 
 igs.log_set_console(True)
 igs.log_set_console_level(igs.LOG_INFO)
@@ -554,6 +570,20 @@ igs.start_with_device(device, port)
 signal.signal(signal.SIGINT, signal_handler)
 
 # ============= Joystick Integration =============
+# Pre-load click sound for low-latency playback on button press
+# Small buffer (512) minimises audio latency compared to the default (2048+)
+try:
+    import pygame.mixer
+    pygame.mixer.pre_init(44100, -16, 1, 512)
+    pygame.mixer.init()
+    _sound_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sound", "click.mp3")
+    click_sound = pygame.mixer.Sound(_sound_path)
+    click_sound.set_volume(CLICK_SOUND_VOLUME)
+    print(f"Click sound loaded: {_sound_path}")
+except Exception as e:
+    click_sound = None
+    print(f"Warning: could not load click sound: {e}")
+
 # Button name mapping for better readability
 BUTTON_NAMES = {
     0: "Button 0",
@@ -582,6 +612,9 @@ class Button5Handler:
     
     def on_press(self):
         """Called when Button 5 is pressed."""
+        # Play click sound immediately for tactile feedback (pre-loaded, minimal latency)
+        if click_sound:
+            click_sound.play()
         self.press_start_time = time.time()
         if JOYSTICK_VERBOSE:
             print(f"[JOYSTICK] Button 5 (#5) - PRESSED")
@@ -688,12 +721,21 @@ JoystickHandler.list_available_joysticks()
 
 # Try to find the "yoko+" joystick (second occurrence if there are multiple)
 joystick_index = JoystickHandler.find_joystick_by_name("yoko+", occurrence=1)
+using_yoko = joystick_index is not None
 if joystick_index is None:
     print("'yoko+' joystick not found, trying first occurrence...")
     joystick_index = JoystickHandler.find_joystick_by_name("yoko+", occurrence=0)
+    using_yoko = joystick_index is not None
     if joystick_index is None:
-        print("No YOKO+ found, using first available joystick (index 0)")
-        joystick_index = 0
+        print("No YOKO+ found, checking for Extreme 3D Pro...")
+        joystick_index = JoystickHandler.find_joystick_by_name("extreme", occurrence=0)
+        if joystick_index is None:
+            print("No Extreme 3D Pro found, using first available joystick (index 0)")
+            joystick_index = 0
+
+# Determine which button gets the smart PTT/check/approve handler
+smart_button = YOKO_SMART_BUTTON if using_yoko else EXTREME3D_SMART_BUTTON
+print(f"Using smart button index: {smart_button} ({'Yoko+' if using_yoko else 'Extreme 3D Pro / fallback'})")
 
 # Disable debug mode for cleaner output
 joystick_handler = JoystickHandler(joystick_index=joystick_index, polling_rate=0.01, debug=False)
@@ -704,8 +746,9 @@ if joystick_handler.initialize():
     # Register callbacks for all buttons
     print(f"\nRegistering callbacks for {joy_info['num_buttons']} buttons...")
     for button_num in range(joy_info['num_buttons']):
-        # Use special handler for Button 5
-        if button_num == 5:
+        # Use special handler for the smart button (PTT / check / approve)
+        if button_num == smart_button:
+            print(f"  Button {button_num} -> Smart handler (PTT/check/approve)")
             joystick_handler.register_button_press(button_num, button5_handler.on_press)
             joystick_handler.register_button_release(button_num, button5_handler.on_release)
         else:
@@ -812,6 +855,7 @@ def send_all_outputs():
         'r_bottle_arm': getattr(agent, '_r_bottle_arm_o', None),
         'ptt': getattr(agent, '_ptt_o', None),
         'yoke_hide': getattr(agent, '_yoke_hide_o', None),
+        'autopilot_airspeed': getattr(agent, '_autopilot_airspeed_o', None),
     }
     
     # Clear all cached values to force setters to send
@@ -880,6 +924,7 @@ def send_all_outputs():
     if output_values['r_bottle_arm'] is not None: agent.r_bottle_arm_o = output_values['r_bottle_arm']
     if output_values['ptt'] is not None: agent.ptt_o = output_values['ptt']
     if output_values['yoke_hide'] is not None: agent.yoke_hide_o = output_values['yoke_hide']
+    if output_values['autopilot_airspeed'] is not None: agent.autopilot_airspeed_o = output_values['autopilot_airspeed']
     
     print("All outputs initialized.")
 
@@ -891,7 +936,7 @@ def main(BirdStrikeEnabled=True):
             while not is_interrupted:
                 time.sleep(refresh_rate)
 
-                airspeed, vert_speed, park_brake, mustang_l_throttle, mustang_r_throttle, n1_match_bug, n1_percent, slip, engine_fires, pax_safety, master_warning, master_caution, flight_director, speed_mode, heading_mode, fuel_boost_l, fuel_boost_r, test_knob, autopilot_heading_set, yaw_damper, l_ign_switch, r_ign_switch, l_gen_switch, r_gen_switch, transfer_knob, baro_setting, cabin_altitude, gen_load, pitot_heat, l_windshield_anti_ice, r_windshield_anti_ice, exterior_lights, anti_coll_lights, engine_anti_ice, trim_rudder, alt_sel, heading_sel, l_bottle_arm, r_bottle_arm, ptt, yoke_hide = get_drefs([ias_dref, verticalSpeed_dref, parkBrake_dref, mustang_l_throttle_dref, mustang_r_throttle_dref, n1_match_bug_dref, n1_percent_dref, slip_dref, engine_fires_dref, pax_safety_dref, master_warning_dref, master_caution_dref, flight_director_dref, speed_mode_dref, heading_mode_dref, fuel_boost_l_dref, fuel_boost_r_dref, test_knob_dref, heading_sel_dref, yaw_damper_dref, l_ign_switch_dref, r_ign_switch_dref, l_gen_switch_dref, r_gen_switch_dref, transfer_knob_dref, baro_setting_dref, cabin_altitude_dref, gen_load_dref, pitot_heat_dref, l_windshield_anti_ice_dref, r_windshield_anti_ice_dref, exterior_lights_dref, anti_coll_lights_dref, anti_ice_engine_dref, trim_rudder_dref, alt_sel_dref, heading_sel_dref, botle_l_arm_dref, botle_r_arm_dref, ptt_dref, yoke_hide_dref])
+                airspeed, vert_speed, park_brake, mustang_l_throttle, mustang_r_throttle, n1_match_bug, n1_percent, slip, engine_fires, pax_safety, master_warning, master_caution, flight_director, speed_mode, heading_mode, fuel_boost_l, fuel_boost_r, test_knob, autopilot_heading_set, yaw_damper, l_ign_switch, r_ign_switch, l_gen_switch, r_gen_switch, transfer_knob, baro_setting, cabin_altitude, gen_load, pitot_heat, l_windshield_anti_ice, r_windshield_anti_ice, exterior_lights, anti_coll_lights, engine_anti_ice, trim_rudder, alt_sel, heading_sel, l_bottle_arm, r_bottle_arm, ptt, yoke_hide, autopilot_airspeed = get_drefs([ias_dref, verticalSpeed_dref, parkBrake_dref, mustang_l_throttle_dref, mustang_r_throttle_dref, n1_match_bug_dref, n1_percent_dref, slip_dref, engine_fires_dref, pax_safety_dref, master_warning_dref, master_caution_dref, flight_director_dref, speed_mode_dref, heading_mode_dref, fuel_boost_l_dref, fuel_boost_r_dref, test_knob_dref, heading_sel_dref, yaw_damper_dref, l_ign_switch_dref, r_ign_switch_dref, l_gen_switch_dref, r_gen_switch_dref, transfer_knob_dref, baro_setting_dref, cabin_altitude_dref, gen_load_dref, pitot_heat_dref, l_windshield_anti_ice_dref, r_windshield_anti_ice_dref, exterior_lights_dref, anti_coll_lights_dref, anti_ice_engine_dref, trim_rudder_dref, alt_sel_dref, heading_sel_dref, botle_l_arm_dref, botle_r_arm_dref, ptt_dref, yoke_hide_dref, autopilot_airspeed_dref])
 
                 agent.airspeed_o = airspeed[0]
                 
@@ -958,6 +1003,7 @@ def main(BirdStrikeEnabled=True):
                 agent.latitude_o = lat
                 agent.longitude_o = long
                 agent.yoke_hide_o = bool(yoke_hide[0])
+                agent.autopilot_airspeed_o = autopilot_airspeed[0]
 
                 time.sleep(refresh_rate)
                 aileron, elevator, rudder, throttle, gear, flaps, speedbrakes = get_control_inputs()

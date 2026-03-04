@@ -100,6 +100,7 @@ class Echo(metaclass=Singleton):
         self.check_o = None
         self.approve_o = None
         self.yoke_hide_o = None
+        self.autopilot_airspeed_o = None
 
     @property
     def airspeed_o(self):
@@ -786,6 +787,17 @@ class Echo(metaclass=Singleton):
         self._yoke_hide_o = value
         if self._yoke_hide_o is not None:
             igs.output_set_bool("yoke_hide", self._yoke_hide_o)
+
+    @property
+    def autopilot_airspeed_o(self):
+        return self._autopilot_airspeed_o
+    @autopilot_airspeed_o.setter
+    def autopilot_airspeed_o(self, value):
+        if hasattr(self, '_autopilot_airspeed_o') and self._autopilot_airspeed_o == value:
+            return
+        self._autopilot_airspeed_o = value
+        if self._autopilot_airspeed_o is not None:
+            igs.output_set_double("autopilot_airspeed", self._autopilot_airspeed_o)
 
     # =========================================================================
 
