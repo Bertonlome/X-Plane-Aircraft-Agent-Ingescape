@@ -90,7 +90,9 @@ r_windshield_anti_ice_dref = "Mustang/cockpit/ai/r_windsheild" # 0 is off, 1 is 
 exterior_lights_dref = "Mustang/cockpit/lighting/taxi_landing" # 0 is off, 1 is taxi, 2 is landing
 anti_coll_lights_dref = "sim/cockpit/electrical/strobe_lights_on" # 0 is off, 1 is on
 load_situation_2_comm = "sim/operation/load_situation_2" 
-load_situation_1_comm = "sim/operation/load_situation_1" 
+load_situation_1_comm = "sim/operation/load_situation_1"
+clear_master_caution_comm = "sim/annunciator/clear_master_caution"
+clear_master_warning_comm = "sim/annunciator/clear_master_warning"
 botle_r_arm_dref = "Mustang/cockpit/bottle_r_arm_b" # 0 is off, 1 is on
 botle_l_arm_dref = "Mustang/cockpit/bottle_l_arm_b" # 0 is off, 1 is on
 l_cutoff_dref = "Mustang/cockpit/engine/l_cutoff"
@@ -141,7 +143,11 @@ def on_freeze_callback(is_frozen, my_data):
     # add code here if needed
 
 def bool_input_callback(io_type, name, value_type, value, my_data):
-    if name == "yaw_damper":
+    if name == "On_Off":
+        if value:
+            print("On_Off triggered - sending all outputs...")
+            send_all_outputs()
+    elif name == "yaw_damper":
         send_dref(yaw_damper_dref, value)
     elif name == "l_ign_switch":
         send_dref(l_ign_switch_dref, value)
@@ -161,12 +167,12 @@ def bool_input_callback(io_type, name, value_type, value, my_data):
         send_dref(r_windshield_anti_ice_dref, int(value))
     elif name == "anti_coll_lights":
         send_dref(anti_coll_lights_dref, int(value))
-    elif name == "l_bottle_arm":
-        send_dref(botle_l_arm_dref, int(value))
-    elif name == "r_bottle_arm":
-        send_dref(botle_r_arm_dref, int(value))
     elif name == "yoke_hide":
         send_dref(yoke_hide_dref, int(value))
+    elif name == "brake":
+        send_dref(parkBrake_dref, int(value))
+    elif name == "gear":
+        set_control_inputs("gear", int(value))
 
 def double_input_callback(io_type, name, value_type, value, my_data):
     if name == "elevator":
@@ -209,9 +215,9 @@ def int_input_callback(io_type, name, value_type, value, my_data):
     if name == "test_knob":
         send_dref(test_knob_dref, value)
     elif name == "l_gen_switch":
-        send_dref(l_gen_switch_dref, value)
+        send_dref(l_gen_switch_dref, value + 1)
     elif name == "r_gen_switch":
-        send_dref(r_gen_switch_dref, value)
+        send_dref(r_gen_switch_dref, value + 1)
     elif name == "transfer_knob":
         send_dref(transfer_knob_dref, value)
     elif name == "alt_sel":
@@ -219,13 +225,16 @@ def int_input_callback(io_type, name, value_type, value, my_data):
     elif name == "autopilot_heading_set":
         send_dref(heading_sel_dref, value)
     elif name == "fuel_boost_l":
-        send_dref(fuel_boost_l_dref, value)
+        send_dref(fuel_boost_l_dref, value + 1)
     elif name == "fuel_boost_r":
-        send_dref(fuel_boost_r_dref, value)
+        send_dref(fuel_boost_r_dref, value + 1)
     elif name == "pax_safety":
-        send_dref(pax_safety_dref, value)
+        send_dref(pax_safety_dref, int(value))
     elif name == "exterior_lights":
-        send_dref(exterior_lights_dref, value)
+        if value == 1:
+            send_dref(exterior_lights_dref, 2) # 2 for landing lights in the mustang
+        else:
+            send_dref(exterior_lights_dref, value) # 0 for off in the mustang 
         
 def impulsion_input_callback(io_type, name, value_type, value, my_data):
     global neverDone, reset_time, outputs_initialized
@@ -236,19 +245,10 @@ def impulsion_input_callback(io_type, name, value_type, value, my_data):
         send_comm(load_situation_1_comm)
         reset_time = time.time()  # Record the time of reset
         outputs_initialized = False  # Mark that outputs need to be re-initialized
-
-    elif name == "gear":
-        current_val = get_control_inputs()[4]
-        print(f"current val = {current_val}")
-        if current_val == 1: set_control_inputs("gear", 0)
-        else:
-            set_control_inputs("gear", 1)
-        pass
-    elif name == "brake":
-        current_val = get_dref(parkBrake_dref)
-        print(f"current val = {current_val}")
-        if current_val[0] == 1: send_dref(parkBrake_dref, 0)
-        else: send_dref(parkBrake_dref, 1)
+    elif name == "clear_m_w":
+        send_comm(clear_master_warning_comm)
+    elif name == "clear_m_c":
+        send_comm(clear_master_caution_comm)
     elif name == "bird_strike":
         send_dref(bird_dref, 2)
         print("Birds incoming ! :)")
@@ -263,6 +263,10 @@ def impulsion_input_callback(io_type, name, value_type, value, my_data):
         send_comm(heading_mode_comm)
     elif name == "autopilot_master":
         send_comm(autopilot_master_comm)
+    elif name == "l_bottle_arm":
+        send_dref(botle_l_arm_dref, int(1))
+    elif name == "r_bottle_arm":
+        send_dref(botle_r_arm_dref, int(1))
 
 def get_dref(arg, is_double=False):
     try:
@@ -390,14 +394,17 @@ agent = Echo()
 igs.observe_agent_events(on_agent_event_callback, agent)
 igs.observe_freeze(on_freeze_callback, agent)
 
+igs.input_create("On_Off", igs.BOOL_T, None)  # Toggle to send all outputs
 igs.input_create("reset", igs.IMPULSION_T, None)
+igs.input_create("clear_m_w", igs.IMPULSION_T, None)
+igs.input_create("clear_m_c", igs.IMPULSION_T, None)
 igs.input_create("elevator", igs.DOUBLE_T, None)
 igs.input_create("rudder", igs.DOUBLE_T, None)
 igs.input_create("aileron", igs.DOUBLE_T, None)
 igs.input_create("throttle", igs.DOUBLE_T, None)
 igs.input_create("flaps", igs.DOUBLE_T, None)
-igs.input_create("gear", igs.IMPULSION_T, None)
-igs.input_create("brake", igs.IMPULSION_T, None)
+igs.input_create("gear", igs.BOOL_T, None)
+igs.input_create("brake", igs.BOOL_T, None)
 igs.input_create("l_throttle", igs.DOUBLE_T, None) #-1 = cutoff
 igs.input_create("r_throttle", igs.DOUBLE_T, None) #-1 = cutoff
 igs.input_create("pax_safety", igs.INTEGER_T, None) # 0 is off, 1 is seatbelt 2 is on  
@@ -429,8 +436,8 @@ igs.input_create("r_windshield_anti_ice", igs.BOOL_T, None)  # 0 is off, 1 is on
 igs.input_create("exterior_lights", igs.INTEGER_T, None)  # 0 is off, 1 is taxi, 2 is landing
 igs.input_create("anti_coll_lights", igs.BOOL_T, None)  # 0 is off, 1 is on
 igs.input_create("trim_rudder", igs.DOUBLE_T, None)
-igs.input_create("l_bottle_arm", igs.BOOL_T, None)  # 0 is off, 1 is on
-igs.input_create("r_bottle_arm", igs.BOOL_T, None)  # 0 is off, 1 is on
+igs.input_create("l_bottle_arm", igs.IMPULSION_T, None)  # 0 is off, 1 is on
+igs.input_create("r_bottle_arm", igs.IMPULSION_T, None)  # 0 is off, 1 is on
 igs.input_create("yoke_hide", igs.BOOL_T, None)  # 0 is show, 1 is hide
 
 igs.output_create("airspeed", igs.DOUBLE_T, None)
@@ -492,17 +499,20 @@ igs.output_create("l_bottle_arm", igs.BOOL_T, None)  # 0 is off, 1 is on
 igs.output_create("r_bottle_arm", igs.BOOL_T, None)  # 0 is off, 1 is on
 igs.output_create("ptt", igs.BOOL_T, None)  # Push-to-talk button
 igs.output_create("check", igs.IMPULSION_T, None)  # Smart button double-click
-igs.output_create("approve", igs.IMPULSION_T, None)  # Smart button triple-click
+igs.output_create("approve", igs.BOOL_T, None)  # Smart button triple-click
 igs.output_create("yoke_hide", igs.BOOL_T, None)  # 0 is show, 1 is hide
 
+igs.observe_input("On_Off", bool_input_callback, None)  # Observe On_Off toggle
 igs.observe_input("reset", impulsion_input_callback, None)
+igs.observe_input("clear_m_w", impulsion_input_callback, None)
+igs.observe_input("clear_m_c", impulsion_input_callback, None)
 igs.observe_input("elevator", double_input_callback, None)
 igs.observe_input("rudder", double_input_callback, None)
 igs.observe_input("aileron", double_input_callback, None)
 igs.observe_input("throttle", double_input_callback, None)
 igs.observe_input("flaps", double_input_callback, None)
-igs.observe_input("gear", impulsion_input_callback, None)
-igs.observe_input("brake", impulsion_input_callback, None)
+igs.observe_input("gear", bool_input_callback, None)
+igs.observe_input("brake", bool_input_callback, None)
 igs.observe_input("bird_strike", impulsion_input_callback, None)
 igs.observe_input("l_throttle", double_input_callback, None)
 igs.observe_input("r_throttle", double_input_callback, None)
@@ -532,8 +542,8 @@ igs.observe_input("anti_coll_lights", bool_input_callback, None)  # 0 is off, 1 
 igs.observe_input("trim_rudder", double_input_callback, None)
 igs.observe_input("alt_sel", int_input_callback, None)
 igs.observe_input("heading_sel", int_input_callback, None)
-igs.observe_input("l_bottle_arm", bool_input_callback, None)  # 0 is off, 1 is on
-igs.observe_input("r_bottle_arm", bool_input_callback, None)  # 0 is off, 1 is on
+igs.observe_input("l_bottle_arm", impulsion_input_callback, None)  # 0 is off, 1 is on
+igs.observe_input("r_bottle_arm", impulsion_input_callback, None)  # 0 is off, 1 is on
 igs.observe_input("yoke_hide", bool_input_callback, None)  # 0 is show, 1 is hide
 
 igs.log_set_console(True)
@@ -633,7 +643,7 @@ class Button5Handler:
             igs.output_set_impulsion("check")
         elif click_count >= 3:
             print("✓✓✓ APPROVE (triple-click detected)")
-            igs.output_set_impulsion("approve")
+            igs.output_set_bool("approve", True)
         # Single click - do nothing special
         
         # Clear the click history
