@@ -92,6 +92,8 @@ class Echo(metaclass=Singleton):
         self.l_engine_anti_ice_o = None
         self.r_engine_anti_ice_o = None
         self.trim_rudder_o = None
+        self.elevator_trim_o = None
+        self.aileron_trim_o = None
         self.alt_sel_o = None
         self.heading_sel_o = None
         self.l_bottle_arm_o = None
@@ -101,6 +103,7 @@ class Echo(metaclass=Singleton):
         self.approve_o = None
         self.yoke_hide_o = None
         self.autopilot_airspeed_o = None
+        self.fd_pitch_deg_o = None
 
     @property
     def airspeed_o(self):
@@ -701,7 +704,29 @@ class Echo(metaclass=Singleton):
         self._trim_rudder_o = value
         if self._trim_rudder_o is not None:
             igs.output_set_double("trim_rudder", self._trim_rudder_o)
-            
+
+    @property
+    def elevator_trim_o(self):
+        return self._elevator_trim_o
+    @elevator_trim_o.setter
+    def elevator_trim_o(self, value):
+        if hasattr(self, '_elevator_trim_o') and self._elevator_trim_o == value:
+            return
+        self._elevator_trim_o = value
+        if self._elevator_trim_o is not None:
+            igs.output_set_double("elevator_trim", self._elevator_trim_o)
+
+    @property
+    def aileron_trim_o(self):
+        return self._aileron_trim_o
+    @aileron_trim_o.setter
+    def aileron_trim_o(self, value):
+        if hasattr(self, '_aileron_trim_o') and self._aileron_trim_o == value:
+            return
+        self._aileron_trim_o = value
+        if self._aileron_trim_o is not None:
+            igs.output_set_double("aileron_trim", self._aileron_trim_o)
+
     @property
     def alt_sel_o(self):
         return self._alt_sel_o
@@ -798,6 +823,17 @@ class Echo(metaclass=Singleton):
         self._autopilot_airspeed_o = value
         if self._autopilot_airspeed_o is not None:
             igs.output_set_double("autopilot_airspeed", self._autopilot_airspeed_o)
+
+    @property
+    def fd_pitch_deg_o(self):
+        return self._fd_pitch_deg_o
+    @fd_pitch_deg_o.setter
+    def fd_pitch_deg_o(self, value):
+        if hasattr(self, '_fd_pitch_deg_o') and self._fd_pitch_deg_o == value:
+            return
+        self._fd_pitch_deg_o = value
+        if self._fd_pitch_deg_o is not None:
+            igs.output_set_double("fd_pitch_deg", self._fd_pitch_deg_o)
 
     # =========================================================================
 
