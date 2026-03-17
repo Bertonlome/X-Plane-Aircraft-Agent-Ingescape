@@ -31,7 +31,7 @@ EXTREME3D_SMART_BUTTON = 0
 neverDone = True
 
 ## def datarefs string
-ptt_dref = "sim/cockpit2/controls/tailwheel_lock_ratio" # function as a dummy ptt for now
+#ptt_dref = "sim/cockpit2/controls/tailwheel_lock_ratio" # function as a dummy ptt for now
 ias_dref = "sim/cockpit2/gauges/indicators/airspeed_kts_pilot"
 pitch_dref = "sim/cockpit2/gauges/indicators/pitch_AHARS_deg_pilot"
 altitude_dref = "sim/cockpit2/gauges/indicators/altitude_ft_pilot"
@@ -121,7 +121,7 @@ autopilot_airspeed_dref = "sim/cockpit/autopilot/airspeed" # airspeed set in the
 refresh_rate = 0.01
 port = 5670
 agent_name = "Aircraft"
-device = "Ethernet"
+device = "A7500_NETGEAR"
 verbose = False
 is_interrupted = False
 start_heading = None
@@ -240,7 +240,7 @@ def impulsion_input_callback(io_type, name, value_type, value, my_data):
         print("Resetting simulation...")
         neverDone = True
         agent.outside_event_o = "RESET"
-        send_comm(load_situation_1_comm)
+        send_comm(load_situation_2_comm)
         reset_time = time.time()  # Record the time of reset
         outputs_initialized = False  # Mark that outputs need to be re-initialized
 
@@ -505,7 +505,7 @@ igs.output_create("l_bottle_arm", igs.BOOL_T, None)  # 0 is off, 1 is on
 igs.output_create("r_bottle_arm", igs.BOOL_T, None)  # 0 is off, 1 is on
 igs.output_create("ptt", igs.BOOL_T, None)  # Push-to-talk button
 igs.output_create("check", igs.IMPULSION_T, None)  # Smart button double-click
-igs.output_create("approve", igs.IMPULSION_T, None)  # Smart button triple-click
+igs.output_create("approve", igs.BOOL_T, None)  # Smart button triple-click
 igs.output_create("yoke_hide", igs.BOOL_T, None)  # 0 is show, 1 is hide
 igs.output_create("autopilot_airspeed", igs.DOUBLE_T, None)  # airspeed set in the autopilot
 
@@ -570,9 +570,14 @@ try:
     click_sound = pygame.mixer.Sound(_sound_path)
     click_sound.set_volume(CLICK_SOUND_VOLUME)
     print(f"Click sound loaded: {_sound_path}")
+    _alarm_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sound", "fire_alarm_bell.mp3")
+    print(f"Fire alarm sound path set: {_alarm_path}")
 except Exception as e:
     click_sound = None
-    print(f"Warning: could not load click sound: {e}")
+    _alarm_path = None
+    print(f"Warning: could not load sounds: {e}")
+
+_master_warning_active = False  # Tracks whether the alarm is currently playing
 
 # Button name mapping for better readability
 BUTTON_NAMES = {
@@ -666,7 +671,8 @@ class Button5Handler:
             igs.output_set_impulsion("check")
         elif click_count >= 3:
             print("✓✓✓ APPROVE (triple-click detected)")
-            igs.output_set_impulsion("approve")
+            igs.output_set_bool("approve", True)
+            igs.output_set_impulsion("check")  # also trigger check on triple-click
         # Single click - do nothing special
         
         # Clear the click history
@@ -921,12 +927,13 @@ def send_all_outputs():
 def main(BirdStrikeEnabled=True):
     global is_interrupted
     global neverDone, reset_time, outputs_initialized
+    global _master_warning_active
     while not is_interrupted:
         try:
             while not is_interrupted:
                 time.sleep(refresh_rate)
 
-                airspeed, vert_speed, park_brake, mustang_l_throttle, mustang_r_throttle, n1_match_bug, n1_percent, slip, engine_fires, pax_safety, master_warning, master_caution, flight_director, speed_mode, heading_mode, fuel_boost_l, fuel_boost_r, test_knob, autopilot_heading_set, yaw_damper, l_ign_switch, r_ign_switch, l_gen_switch, r_gen_switch, transfer_knob, baro_setting, cabin_altitude, gen_load, pitot_heat, l_windshield_anti_ice, r_windshield_anti_ice, exterior_lights, anti_coll_lights, engine_anti_ice, trim_rudder, alt_sel, heading_sel, l_bottle_arm, r_bottle_arm, ptt, yoke_hide, autopilot_airspeed = get_drefs([ias_dref, verticalSpeed_dref, parkBrake_dref, mustang_l_throttle_dref, mustang_r_throttle_dref, n1_match_bug_dref, n1_percent_dref, slip_dref, engine_fires_dref, pax_safety_dref, master_warning_dref, master_caution_dref, flight_director_dref, speed_mode_dref, heading_mode_dref, fuel_boost_l_dref, fuel_boost_r_dref, test_knob_dref, heading_sel_dref, yaw_damper_dref, l_ign_switch_dref, r_ign_switch_dref, l_gen_switch_dref, r_gen_switch_dref, transfer_knob_dref, baro_setting_dref, cabin_altitude_dref, gen_load_dref, pitot_heat_dref, l_windshield_anti_ice_dref, r_windshield_anti_ice_dref, exterior_lights_dref, anti_coll_lights_dref, anti_ice_engine_dref, trim_rudder_dref, alt_sel_dref, heading_sel_dref, botle_l_arm_dref, botle_r_arm_dref, ptt_dref, yoke_hide_dref, autopilot_airspeed_dref])
+                airspeed, vert_speed, park_brake, mustang_l_throttle, mustang_r_throttle, n1_match_bug, n1_percent, slip, engine_fires, pax_safety, master_warning, master_caution, flight_director, speed_mode, heading_mode, fuel_boost_l, fuel_boost_r, test_knob, autopilot_heading_set, yaw_damper, l_ign_switch, r_ign_switch, l_gen_switch, r_gen_switch, transfer_knob, baro_setting, cabin_altitude, gen_load, pitot_heat, l_windshield_anti_ice, r_windshield_anti_ice, exterior_lights, anti_coll_lights, engine_anti_ice, trim_rudder, alt_sel, heading_sel, l_bottle_arm, r_bottle_arm, yoke_hide, autopilot_airspeed = get_drefs([ias_dref, verticalSpeed_dref, parkBrake_dref, mustang_l_throttle_dref, mustang_r_throttle_dref, n1_match_bug_dref, n1_percent_dref, slip_dref, engine_fires_dref, pax_safety_dref, master_warning_dref, master_caution_dref, flight_director_dref, speed_mode_dref, heading_mode_dref, fuel_boost_l_dref, fuel_boost_r_dref, test_knob_dref, heading_sel_dref, yaw_damper_dref, l_ign_switch_dref, r_ign_switch_dref, l_gen_switch_dref, r_gen_switch_dref, transfer_knob_dref, baro_setting_dref, cabin_altitude_dref, gen_load_dref, pitot_heat_dref, l_windshield_anti_ice_dref, r_windshield_anti_ice_dref, exterior_lights_dref, anti_coll_lights_dref, anti_ice_engine_dref, trim_rudder_dref, alt_sel_dref, heading_sel_dref, botle_l_arm_dref, botle_r_arm_dref, yoke_hide_dref, autopilot_airspeed_dref])
 
                 agent.airspeed_o = airspeed[0]
                 
@@ -952,7 +959,17 @@ def main(BirdStrikeEnabled=True):
                 agent.engine_fire_r_o = bool(engine_fires[1])
 
                 agent.pax_safety_o = int(pax_safety[0])
-                agent.master_warning_o = bool(master_warning[0])
+                master_warning_bool = bool(master_warning[0])
+                agent.master_warning_o = master_warning_bool
+                # Start/stop fire alarm bell based on master_warning state
+                if _alarm_path is not None:
+                    if master_warning_bool and not _master_warning_active:
+                        pygame.mixer.music.load(_alarm_path)
+                        pygame.mixer.music.play(-1)
+                        _master_warning_active = True
+                    elif not master_warning_bool and _master_warning_active:
+                        pygame.mixer.music.stop()
+                        _master_warning_active = False
                 agent.master_caution_o = bool(master_caution[0])
                 agent.flight_director_o = int(flight_director[0])
                 agent.speed_mode_o = int(speed_mode[0])
@@ -983,7 +1000,7 @@ def main(BirdStrikeEnabled=True):
                 agent.heading_sel_o = int(heading_sel[0])
                 agent.l_bottle_arm_o = bool(l_bottle_arm[0])
                 agent.r_bottle_arm_o = bool(r_bottle_arm[0])
-                agent.ptt_o = bool(ptt[0])
+                #agent.ptt_o = bool(ptt[0])
                 time.sleep(refresh_rate)
                 pitch, heading, roll, alt, lat, long = get_position()
                 agent.pitch_o = pitch
