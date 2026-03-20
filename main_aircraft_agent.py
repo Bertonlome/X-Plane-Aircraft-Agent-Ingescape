@@ -60,6 +60,8 @@ engine_fires_dref = "sim/cockpit/warnings/annunciators/engine_fires" # [0, 0] fi
 generators_off_dref = "sim/cockpit/warnings/annunciators/generator_off" # [0, 0] first means L generator, second means R generator
 pax_safety_dref = "Mustang/cockpit/pax_safety" # 0 is off, 1 is seatbelt 2 is on
 trim_rudder_dref = "sim/cockpit2/controls/rudder_trim"
+elevator_trim_dref = "sim/cockpit2/controls/elevator_trim"
+aileron_trim_dref = "sim/cockpit2/controls/aileron_trim"
 master_warning_dref = "Mustang/master_warning" #readonly 0 is off, 1 is on
 master_caution_dref = "Mustang/master_caution" #readonly 0 is off, 1 is on
 flight_director_dref = "sim/cockpit2/autopilot/flight_director_mode" 
@@ -96,7 +98,9 @@ r_windshield_anti_ice_dref = "Mustang/cockpit/ai/r_windsheild" # 0 is off, 1 is 
 exterior_lights_dref = "Mustang/cockpit/lighting/taxi_landing" # 0 is off, 1 is taxi, 2 is landing
 anti_coll_lights_dref = "sim/cockpit/electrical/strobe_lights_on" # 0 is off, 1 is on
 load_situation_2_comm = "sim/operation/load_situation_2" 
-load_situation_1_comm = "sim/operation/load_situation_1" 
+load_situation_1_comm = "sim/operation/load_situation_1"
+clear_master_caution_comm = "sim/annunciator/clear_master_caution"
+clear_master_warning_comm = "sim/annunciator/clear_master_warning"
 botle_r_arm_dref = "Mustang/cockpit/bottle_r_arm_b" # 0 is off, 1 is on
 botle_l_arm_dref = "Mustang/cockpit/bottle_l_arm_b" # 0 is off, 1 is on
 l_cutoff_dref = "Mustang/cockpit/engine/l_cutoff"
@@ -104,6 +108,7 @@ r_cutoff_dref = "Mustang/cockpit/engine/r_cutoff"
 yoke_hide_dref = "Mustang/cockpit/yoke_hide" # 0 is show, 1 is hide
 speed_brake_dref = "sim/cockpit2/controls/speedbrake_ratio"
 autopilot_airspeed_dref = "sim/cockpit/autopilot/airspeed" # airspeed set in the autopilot
+fd_pitch_deg_dref = "sim/cockpit2/autopilot/sync_hold_pitch_deg"
 
 """
 		a.observeInput("alarm", agentCB);
@@ -148,7 +153,11 @@ def on_freeze_callback(is_frozen, my_data):
     # add code here if needed
 
 def bool_input_callback(io_type, name, value_type, value, my_data):
-    if name == "yaw_damper":
+    if name == "On_Off":
+        if value:
+            print("On_Off triggered - sending all outputs...")
+            send_all_outputs()
+    elif name == "yaw_damper":
         send_dref(yaw_damper_dref, value)
     elif name == "l_ign_switch":
         send_dref(l_ign_switch_dref, value)
@@ -168,12 +177,12 @@ def bool_input_callback(io_type, name, value_type, value, my_data):
         send_dref(r_windshield_anti_ice_dref, int(value))
     elif name == "anti_coll_lights":
         send_dref(anti_coll_lights_dref, int(value))
-    elif name == "l_bottle_arm":
-        send_dref(botle_l_arm_dref, int(value))
-    elif name == "r_bottle_arm":
-        send_dref(botle_r_arm_dref, int(value))
     elif name == "yoke_hide":
         send_dref(yoke_hide_dref, int(value))
+    elif name == "brake":
+        send_dref(parkBrake_dref, int(value))
+    elif name == "gear":
+        set_control_inputs("gear", int(value))
 
 def double_input_callback(io_type, name, value_type, value, my_data):
     if name == "elevator":
@@ -211,14 +220,20 @@ def double_input_callback(io_type, name, value_type, value, my_data):
     elif name == "trim_rudder":
         print(f"Setting trim_rudder to {value}")
         send_dref(trim_rudder_dref, value)
+    elif name == "elevator_trim":
+        send_dref(elevator_trim_dref, value)
+    elif name == "aileron_trim":
+        send_dref(aileron_trim_dref, value)
+    elif name == "fd_pitch_deg":
+        send_dref(fd_pitch_deg_dref, value)
 
 def int_input_callback(io_type, name, value_type, value, my_data):
     if name == "test_knob":
         send_dref(test_knob_dref, value)
     elif name == "l_gen_switch":
-        send_dref(l_gen_switch_dref, value)
+        send_dref(l_gen_switch_dref, value + 1)
     elif name == "r_gen_switch":
-        send_dref(r_gen_switch_dref, value)
+        send_dref(r_gen_switch_dref, value + 1)
     elif name == "transfer_knob":
         send_dref(transfer_knob_dref, value)
     elif name == "alt_sel":
@@ -226,13 +241,16 @@ def int_input_callback(io_type, name, value_type, value, my_data):
     elif name == "autopilot_heading_set":
         send_dref(heading_sel_dref, value)
     elif name == "fuel_boost_l":
-        send_dref(fuel_boost_l_dref, value)
+        send_dref(fuel_boost_l_dref, value + 1)
     elif name == "fuel_boost_r":
-        send_dref(fuel_boost_r_dref, value)
+        send_dref(fuel_boost_r_dref, value + 1)
     elif name == "pax_safety":
-        send_dref(pax_safety_dref, value)
+        send_dref(pax_safety_dref, int(value))
     elif name == "exterior_lights":
-        send_dref(exterior_lights_dref, value)
+        if value == 1:
+            send_dref(exterior_lights_dref, 2) # 2 for landing lights in the mustang
+        else:
+            send_dref(exterior_lights_dref, value) # 0 for off in the mustang 
         
 def impulsion_input_callback(io_type, name, value_type, value, my_data):
     global neverDone, reset_time, outputs_initialized
@@ -243,19 +261,10 @@ def impulsion_input_callback(io_type, name, value_type, value, my_data):
         send_comm(load_situation_2_comm)
         reset_time = time.time()  # Record the time of reset
         outputs_initialized = False  # Mark that outputs need to be re-initialized
-
-    elif name == "gear":
-        current_val = get_control_inputs()[4]
-        print(f"current val = {current_val}")
-        if current_val == 1: set_control_inputs("gear", 0)
-        else:
-            set_control_inputs("gear", 1)
-        pass
-    elif name == "brake":
-        current_val = get_dref(parkBrake_dref)
-        print(f"current val = {current_val}")
-        if current_val[0] == 1: send_dref(parkBrake_dref, 0)
-        else: send_dref(parkBrake_dref, 1)
+    elif name == "clear_m_w":
+        send_comm(clear_master_warning_comm)
+    elif name == "clear_m_c":
+        send_comm(clear_master_caution_comm)
     elif name == "bird_strike":
         send_dref(bird_dref, 2)
         print("Birds incoming ! :)")
@@ -270,6 +279,10 @@ def impulsion_input_callback(io_type, name, value_type, value, my_data):
         send_comm(heading_mode_comm)
     elif name == "autopilot_master":
         send_comm(autopilot_master_comm)
+    elif name == "l_bottle_arm":
+        send_dref(botle_l_arm_dref, int(1))
+    elif name == "r_bottle_arm":
+        send_dref(botle_r_arm_dref, int(1))
     elif name == "nose_down":
         send_comm(vertical_speed_down_comm)
     elif name == "nose_up":
@@ -401,14 +414,17 @@ agent = Echo()
 igs.observe_agent_events(on_agent_event_callback, agent)
 igs.observe_freeze(on_freeze_callback, agent)
 
+igs.input_create("On_Off", igs.BOOL_T, None)  # Toggle to send all outputs
 igs.input_create("reset", igs.IMPULSION_T, None)
+igs.input_create("clear_m_w", igs.IMPULSION_T, None)
+igs.input_create("clear_m_c", igs.IMPULSION_T, None)
 igs.input_create("elevator", igs.DOUBLE_T, None)
 igs.input_create("rudder", igs.DOUBLE_T, None)
 igs.input_create("aileron", igs.DOUBLE_T, None)
 igs.input_create("throttle", igs.DOUBLE_T, None)
 igs.input_create("flaps", igs.DOUBLE_T, None)
-igs.input_create("gear", igs.IMPULSION_T, None)
-igs.input_create("brake", igs.IMPULSION_T, None)
+igs.input_create("gear", igs.BOOL_T, None)
+igs.input_create("brake", igs.BOOL_T, None)
 igs.input_create("l_throttle", igs.DOUBLE_T, None) #-1 = cutoff
 igs.input_create("r_throttle", igs.DOUBLE_T, None) #-1 = cutoff
 igs.input_create("pax_safety", igs.INTEGER_T, None) # 0 is off, 1 is seatbelt 2 is on  
@@ -440,8 +456,11 @@ igs.input_create("r_windshield_anti_ice", igs.BOOL_T, None)  # 0 is off, 1 is on
 igs.input_create("exterior_lights", igs.INTEGER_T, None)  # 0 is off, 1 is taxi, 2 is landing
 igs.input_create("anti_coll_lights", igs.BOOL_T, None)  # 0 is off, 1 is on
 igs.input_create("trim_rudder", igs.DOUBLE_T, None)
-igs.input_create("l_bottle_arm", igs.BOOL_T, None)  # 0 is off, 1 is on
-igs.input_create("r_bottle_arm", igs.BOOL_T, None)  # 0 is off, 1 is on
+igs.input_create("elevator_trim", igs.DOUBLE_T, None)
+igs.input_create("aileron_trim", igs.DOUBLE_T, None)
+igs.input_create("fd_pitch_deg", igs.DOUBLE_T, None)
+igs.input_create("l_bottle_arm", igs.IMPULSION_T, None)  # 0 is off, 1 is on
+igs.input_create("r_bottle_arm", igs.IMPULSION_T, None)  # 0 is off, 1 is on
 igs.input_create("yoke_hide", igs.BOOL_T, None)  # 0 is show, 1 is hide
 igs.input_create("nose_down", igs.IMPULSION_T, None)
 igs.input_create("nose_up", igs.IMPULSION_T, None)
@@ -499,6 +518,8 @@ igs.output_create("r_windshield_anti_ice", igs.BOOL_T, None)  # 0 is off, 1 is o
 igs.output_create("exterior_lights", igs.INTEGER_T, None)  # 0 is off, 1 is taxi, 2 is landing
 igs.output_create("anti_coll_lights", igs.BOOL_T, None)  # 0 is off, 1 is on
 igs.output_create("trim_rudder", igs.DOUBLE_T, None)
+igs.output_create("elevator_trim", igs.DOUBLE_T, None)
+igs.output_create("aileron_trim", igs.DOUBLE_T, None)
 igs.output_create("alt_sel", igs.INTEGER_T, None)
 igs.output_create("heading_sel", igs.INTEGER_T, None)
 igs.output_create("l_bottle_arm", igs.BOOL_T, None)  # 0 is off, 1 is on
@@ -508,15 +529,19 @@ igs.output_create("check", igs.IMPULSION_T, None)  # Smart button double-click
 igs.output_create("approve", igs.BOOL_T, None)  # Smart button triple-click
 igs.output_create("yoke_hide", igs.BOOL_T, None)  # 0 is show, 1 is hide
 igs.output_create("autopilot_airspeed", igs.DOUBLE_T, None)  # airspeed set in the autopilot
+igs.output_create("fd_pitch_deg", igs.DOUBLE_T, None)
 
+igs.observe_input("On_Off", bool_input_callback, None)  # Observe On_Off toggle
 igs.observe_input("reset", impulsion_input_callback, None)
+igs.observe_input("clear_m_w", impulsion_input_callback, None)
+igs.observe_input("clear_m_c", impulsion_input_callback, None)
 igs.observe_input("elevator", double_input_callback, None)
 igs.observe_input("rudder", double_input_callback, None)
 igs.observe_input("aileron", double_input_callback, None)
 igs.observe_input("throttle", double_input_callback, None)
 igs.observe_input("flaps", double_input_callback, None)
-igs.observe_input("gear", impulsion_input_callback, None)
-igs.observe_input("brake", impulsion_input_callback, None)
+igs.observe_input("gear", bool_input_callback, None)
+igs.observe_input("brake", bool_input_callback, None)
 igs.observe_input("bird_strike", impulsion_input_callback, None)
 igs.observe_input("l_throttle", double_input_callback, None)
 igs.observe_input("r_throttle", double_input_callback, None)
@@ -544,10 +569,13 @@ igs.observe_input("r_windshield_anti_ice", bool_input_callback, None)  # 0 is of
 igs.observe_input("exterior_lights", int_input_callback, None)  # 0 is off, 1 is taxi, 2 is landing
 igs.observe_input("anti_coll_lights", bool_input_callback, None)  # 0 is off, 1 is on
 igs.observe_input("trim_rudder", double_input_callback, None)
+igs.observe_input("elevator_trim", double_input_callback, None)
+igs.observe_input("aileron_trim", double_input_callback, None)
+igs.observe_input("fd_pitch_deg", double_input_callback, None)
 igs.observe_input("alt_sel", int_input_callback, None)
 igs.observe_input("heading_sel", int_input_callback, None)
-igs.observe_input("l_bottle_arm", bool_input_callback, None)  # 0 is off, 1 is on
-igs.observe_input("r_bottle_arm", bool_input_callback, None)  # 0 is off, 1 is on
+igs.observe_input("l_bottle_arm", impulsion_input_callback, None)  # 0 is off, 1 is on
+igs.observe_input("r_bottle_arm", impulsion_input_callback, None)  # 0 is off, 1 is on
 igs.observe_input("yoke_hide", bool_input_callback, None)  # 0 is show, 1 is hide
 igs.observe_input("nose_down", impulsion_input_callback, None)
 igs.observe_input("nose_up", impulsion_input_callback, None)
@@ -672,7 +700,6 @@ class Button5Handler:
         elif click_count >= 3:
             print("✓✓✓ APPROVE (triple-click detected)")
             igs.output_set_bool("approve", True)
-            igs.output_set_impulsion("check")  # also trigger check on triple-click
         # Single click - do nothing special
         
         # Clear the click history
@@ -845,6 +872,8 @@ def send_all_outputs():
         'exterior_lights': getattr(agent, '_exterior_lights_o', None),
         'anti_coll_lights': getattr(agent, '_anti_coll_lights_o', None),
         'trim_rudder': getattr(agent, '_trim_rudder_o', None),
+        'elevator_trim': getattr(agent, '_elevator_trim_o', None),
+        'aileron_trim': getattr(agent, '_aileron_trim_o', None),
         'alt_sel': getattr(agent, '_alt_sel_o', None),
         'heading_sel': getattr(agent, '_heading_sel_o', None),
         'l_bottle_arm': getattr(agent, '_l_bottle_arm_o', None),
@@ -852,6 +881,7 @@ def send_all_outputs():
         'ptt': getattr(agent, '_ptt_o', None),
         'yoke_hide': getattr(agent, '_yoke_hide_o', None),
         'autopilot_airspeed': getattr(agent, '_autopilot_airspeed_o', None),
+        'fd_pitch_deg': getattr(agent, '_fd_pitch_deg_o', None),
     }
     
     # Clear all cached values to force setters to send
@@ -914,6 +944,8 @@ def send_all_outputs():
     if output_values['exterior_lights'] is not None: agent.exterior_lights_o = output_values['exterior_lights']
     if output_values['anti_coll_lights'] is not None: agent.anti_coll_lights_o = output_values['anti_coll_lights']
     if output_values['trim_rudder'] is not None: agent.trim_rudder_o = output_values['trim_rudder']
+    if output_values['elevator_trim'] is not None: agent.elevator_trim_o = output_values['elevator_trim']
+    if output_values['aileron_trim'] is not None: agent.aileron_trim_o = output_values['aileron_trim']
     if output_values['alt_sel'] is not None: agent.alt_sel_o = output_values['alt_sel']
     if output_values['heading_sel'] is not None: agent.heading_sel_o = output_values['heading_sel']
     if output_values['l_bottle_arm'] is not None: agent.l_bottle_arm_o = output_values['l_bottle_arm']
@@ -921,6 +953,7 @@ def send_all_outputs():
     if output_values['ptt'] is not None: agent.ptt_o = output_values['ptt']
     if output_values['yoke_hide'] is not None: agent.yoke_hide_o = output_values['yoke_hide']
     if output_values['autopilot_airspeed'] is not None: agent.autopilot_airspeed_o = output_values['autopilot_airspeed']
+    if output_values['fd_pitch_deg'] is not None: agent.fd_pitch_deg_o = output_values['fd_pitch_deg']
     
     print("All outputs initialized.")
 
@@ -933,7 +966,7 @@ def main(BirdStrikeEnabled=True):
             while not is_interrupted:
                 time.sleep(refresh_rate)
 
-                airspeed, vert_speed, park_brake, mustang_l_throttle, mustang_r_throttle, n1_match_bug, n1_percent, slip, engine_fires, pax_safety, master_warning, master_caution, flight_director, speed_mode, heading_mode, fuel_boost_l, fuel_boost_r, test_knob, autopilot_heading_set, yaw_damper, l_ign_switch, r_ign_switch, l_gen_switch, r_gen_switch, transfer_knob, baro_setting, cabin_altitude, gen_load, pitot_heat, l_windshield_anti_ice, r_windshield_anti_ice, exterior_lights, anti_coll_lights, engine_anti_ice, trim_rudder, alt_sel, heading_sel, l_bottle_arm, r_bottle_arm, yoke_hide, autopilot_airspeed = get_drefs([ias_dref, verticalSpeed_dref, parkBrake_dref, mustang_l_throttle_dref, mustang_r_throttle_dref, n1_match_bug_dref, n1_percent_dref, slip_dref, engine_fires_dref, pax_safety_dref, master_warning_dref, master_caution_dref, flight_director_dref, speed_mode_dref, heading_mode_dref, fuel_boost_l_dref, fuel_boost_r_dref, test_knob_dref, heading_sel_dref, yaw_damper_dref, l_ign_switch_dref, r_ign_switch_dref, l_gen_switch_dref, r_gen_switch_dref, transfer_knob_dref, baro_setting_dref, cabin_altitude_dref, gen_load_dref, pitot_heat_dref, l_windshield_anti_ice_dref, r_windshield_anti_ice_dref, exterior_lights_dref, anti_coll_lights_dref, anti_ice_engine_dref, trim_rudder_dref, alt_sel_dref, heading_sel_dref, botle_l_arm_dref, botle_r_arm_dref, yoke_hide_dref, autopilot_airspeed_dref])
+                airspeed, vert_speed, park_brake, mustang_l_throttle, mustang_r_throttle, n1_match_bug, n1_percent, slip, engine_fires, pax_safety, master_warning, master_caution, flight_director, speed_mode, heading_mode, fuel_boost_l, fuel_boost_r, test_knob, autopilot_heading_set, yaw_damper, l_ign_switch, r_ign_switch, l_gen_switch, r_gen_switch, transfer_knob, baro_setting, cabin_altitude, gen_load, pitot_heat, l_windshield_anti_ice, r_windshield_anti_ice, exterior_lights, anti_coll_lights, engine_anti_ice, trim_rudder, alt_sel, heading_sel, l_bottle_arm, r_bottle_arm, ptt, yoke_hide, autopilot_airspeed, elevator_trim, aileron_trim, fd_pitch_deg = get_drefs([ias_dref, verticalSpeed_dref, parkBrake_dref, mustang_l_throttle_dref, mustang_r_throttle_dref, n1_match_bug_dref, n1_percent_dref, slip_dref, engine_fires_dref, pax_safety_dref, master_warning_dref, master_caution_dref, flight_director_dref, speed_mode_dref, heading_mode_dref, fuel_boost_l_dref, fuel_boost_r_dref, test_knob_dref, heading_sel_dref, yaw_damper_dref, l_ign_switch_dref, r_ign_switch_dref, l_gen_switch_dref, r_gen_switch_dref, transfer_knob_dref, baro_setting_dref, cabin_altitude_dref, gen_load_dref, pitot_heat_dref, l_windshield_anti_ice_dref, r_windshield_anti_ice_dref, exterior_lights_dref, anti_coll_lights_dref, anti_ice_engine_dref, trim_rudder_dref, alt_sel_dref, heading_sel_dref, botle_l_arm_dref, botle_r_arm_dref, ptt_dref, yoke_hide_dref, autopilot_airspeed_dref, elevator_trim_dref, aileron_trim_dref, fd_pitch_deg_dref])
 
                 agent.airspeed_o = airspeed[0]
                 
@@ -996,6 +1029,8 @@ def main(BirdStrikeEnabled=True):
                 agent.l_engine_anti_ice_o = bool(engine_anti_ice[0])
                 agent.r_engine_anti_ice_o = bool(engine_anti_ice[1])
                 agent.trim_rudder_o = trim_rudder[0]
+                agent.elevator_trim_o = elevator_trim[0]
+                agent.aileron_trim_o = aileron_trim[0]
                 agent.alt_sel_o = int(alt_sel[0])
                 agent.heading_sel_o = int(heading_sel[0])
                 agent.l_bottle_arm_o = bool(l_bottle_arm[0])
@@ -1011,6 +1046,7 @@ def main(BirdStrikeEnabled=True):
                 agent.longitude_o = long
                 agent.yoke_hide_o = bool(yoke_hide[0])
                 agent.autopilot_airspeed_o = autopilot_airspeed[0]
+                agent.fd_pitch_deg_o = fd_pitch_deg[0]
 
                 time.sleep(refresh_rate)
                 aileron, elevator, rudder, throttle, gear, flaps, speedbrakes = get_control_inputs()
