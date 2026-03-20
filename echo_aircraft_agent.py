@@ -101,6 +101,7 @@ class Echo(metaclass=Singleton):
         self.approve_o = None
         self.yoke_hide_o = None
         self.autopilot_airspeed_o = None
+        self.com_1_freq_o = None
 
     @property
     def airspeed_o(self):
@@ -798,6 +799,17 @@ class Echo(metaclass=Singleton):
         self._autopilot_airspeed_o = value
         if self._autopilot_airspeed_o is not None:
             igs.output_set_double("autopilot_airspeed", self._autopilot_airspeed_o)
+
+    @property
+    def com_1_freq_o(self):
+        return self._com_1_freq_o
+    @com_1_freq_o.setter
+    def com_1_freq_o(self, value):
+        if hasattr(self, '_com_1_freq_o') and self._com_1_freq_o == value:
+            return
+        self._com_1_freq_o = value
+        if self._com_1_freq_o is not None:
+            igs.output_set_int("com_1_freq", self._com_1_freq_o)
 
     # =========================================================================
 
