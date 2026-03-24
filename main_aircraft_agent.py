@@ -122,21 +122,27 @@ com_1_freq_dref = "sim/cockpit/radios/com1_freq_hz" #11980 is 119.80 MHz, multip
 refresh_rate = 0.01
 port = 5670
 agent_name = "Aircraft"
-device = "A7500_NETGEAR"
+device = "Ethernet"
 verbose = False
 is_interrupted = False
 start_heading = None
-joystick_handler = None  # Global joystick handler instance
+joystick_handler = None  # Global joystick handler instance (primary yoke/stick)
+g1000_mfd_handler = None  # JoystickHandler for Virtual Fly G1000 MFD knobs
+g1000_pfd_handler = None  # JoystickHandler for Virtual Fly G1000 PFD knobs
 reset_time = None  # Track when reset was triggered
 outputs_initialized = False  # Track if outputs have been sent after reset
 
 def signal_handler(signal_received, frame):
-    global is_interrupted, joystick_handler
+    global is_interrupted, joystick_handler, g1000_mfd_handler, g1000_pfd_handler
     print("\n", signal.strsignal(signal_received), sep="")
     is_interrupted = True
     # Stop joystick monitoring on exit
     if joystick_handler:
         joystick_handler.stop()
+    if g1000_mfd_handler:
+        g1000_mfd_handler.stop()
+    if g1000_pfd_handler:
+        g1000_pfd_handler.stop()
 
 def on_agent_event_callback(event, uuid, name, event_data, my_data):
     agent_object = my_data
@@ -508,6 +514,7 @@ igs.output_create("heading_sel", igs.INTEGER_T, None)
 igs.output_create("l_bottle_arm", igs.BOOL_T, None)  # 0 is off, 1 is on
 igs.output_create("r_bottle_arm", igs.BOOL_T, None)  # 0 is off, 1 is on
 igs.output_create("ptt", igs.BOOL_T, None)  # Push-to-talk button
+igs.output_create("ptt_atc", igs.BOOL_T, None)  # Push-to-talk ATC (button 0)
 igs.output_create("check", igs.IMPULSION_T, None)  # Smart button double-click
 igs.output_create("approve", igs.BOOL_T, None)  # Smart button triple-click
 igs.output_create("yoke_hide", igs.BOOL_T, None)  # 0 is show, 1 is hide
@@ -747,9 +754,22 @@ if joystick_handler.initialize():
     
     # Register callbacks for all buttons
     print(f"\nRegistering callbacks for {joy_info['num_buttons']} buttons...")
+    def _ptt_atc_press():
+        if JOYSTICK_VERBOSE:
+            print(f"[JOYSTICK] Button 0 (#0) - PRESSED")
+        igs.output_set_bool("ptt_atc", True)
+    def _ptt_atc_release():
+        if JOYSTICK_VERBOSE:
+            print(f"[JOYSTICK] Button 0 (#0) - RELEASED")
+        igs.output_set_bool("ptt_atc", False)
     for button_num in range(joy_info['num_buttons']):
-        # Use special handler for the smart button (PTT / check / approve)
-        if button_num == smart_button:
+        if button_num == 0:
+            # Button 0 is always PTT-ATC: True on press, False on release
+            print(f"  Button 0 -> PTT-ATC handler (ptt_atc)")
+            joystick_handler.register_button_press(0, _ptt_atc_press)
+            joystick_handler.register_button_release(0, _ptt_atc_release)
+        elif button_num == smart_button:
+            # Use special handler for the smart button (PTT / check / approve)
             print(f"  Button {button_num} -> Smart handler (PTT/check/approve)")
             joystick_handler.register_button_press(button_num, button5_handler.on_press)
             joystick_handler.register_button_release(button_num, button5_handler.on_release)
@@ -772,7 +792,68 @@ if joystick_handler.initialize():
 else:
     print("Joystick not available - continuing without joystick integration.")
     joystick_handler = None
-# ============= End Joystick Integration =============
+
+# ============= G1000 ALT Selector Integration =============
+# Buttons 16-19 on both MFD and PFD reproduce the Garmin G1000 autopilot ALT knob.
+# Native X-Plane behaviour is broken for this aircraft, so we read/write alt_sel_dref
+# directly.  alt_sel_dref is stored in units of ×100 ft (10 000 ft → dref value 100).
+#   Button 19 = ALT inner ring UP   (+100 ft)
+#   Button 18 = ALT inner ring DOWN (-100 ft)
+#   Button 17 = ALT outer ring UP   (+1000 ft)
+#   Button 16 = ALT outer ring DOWN (-1000 ft)
+
+_ALT_KNOB_BUTTONS = {
+    19: ("ALT inner UP",    +100),
+    18: ("ALT inner DOWN",  -100),
+    17: ("ALT outer UP",   +1000),
+    16: ("ALT outer DOWN", -1000),
+}
+
+def _alt_sel_adjust(delta_ft: int):
+    """Read current autopilot altitude, add delta_ft, clamp, and write back."""
+    current = get_dref(alt_sel_dref)
+    current_ft = round(current[0] * 100)          # ×100 ft → ft
+    new_ft = max(0, min(45000, current_ft + delta_ft))
+    send_dref(alt_sel_dref, new_ft / 100)
+    igs.output_set_integer("alt_sel", new_ft)
+    print(f"[ALT SEL] {current_ft} ft → {new_ft} ft (Δ{delta_ft:+d} ft)")
+
+def _make_alt_knob_handler(panel: str, btn: int):
+    label, delta = _ALT_KNOB_BUTTONS[btn]
+    def handler():
+        print(f"[G1000 {panel}] {label} (#{btn})")
+        _alt_sel_adjust(delta)
+    return handler
+
+mfd_index = JoystickHandler.find_joystick_by_name("G1000 MFD", occurrence=0)
+if mfd_index is not None:
+    g1000_mfd_handler = JoystickHandler(joystick_index=mfd_index, polling_rate=0.02, debug=False)
+    if g1000_mfd_handler.initialize():
+        for btn in _ALT_KNOB_BUTTONS:
+            g1000_mfd_handler.register_button_press(btn, _make_alt_knob_handler("MFD", btn))
+        g1000_mfd_handler.start()
+        print("G1000 MFD ALT knob active (buttons 16-19).")
+    else:
+        print("G1000 MFD found but failed to initialize.")
+        g1000_mfd_handler = None
+else:
+    print("Virtual Fly G1000 MFD not found - skipping MFD integration.")
+
+# Use occurrence=1 to skip "G1000 PFD2" (occurrence 0) and land on "G1000 PFD"
+pfd_index = JoystickHandler.find_joystick_by_name("G1000 PFD", occurrence=1)
+if pfd_index is not None:
+    g1000_pfd_handler = JoystickHandler(joystick_index=pfd_index, polling_rate=0.02, debug=False)
+    if g1000_pfd_handler.initialize():
+        for btn in _ALT_KNOB_BUTTONS:
+            g1000_pfd_handler.register_button_press(btn, _make_alt_knob_handler("PFD", btn))
+        g1000_pfd_handler.start()
+        print("G1000 PFD ALT knob active (buttons 16-19).")
+    else:
+        print("G1000 PFD found but failed to initialize.")
+        g1000_pfd_handler = None
+else:
+    print("Virtual Fly G1000 PFD not found - skipping PFD integration.")
+# ============= End G1000 ALT Selector Integration =============
 
 
 def send_all_outputs():

@@ -15,6 +15,9 @@ except ImportError:
     pygame = None
     print("pygame not installed. Install with: pip install pygame")
 
+# Shared lock so multiple JoystickHandler threads don't call pygame.event.pump() simultaneously
+_pygame_lock = threading.Lock()
+
 
 class JoystickHandler:
     """
@@ -48,7 +51,9 @@ class JoystickHandler:
                 name = joy.get_name()
                 joysticks.append((i, name))
                 print(f"  [{i}] {name}")
-                joy.quit()
+                # Do NOT call joy.quit() here — in pygame 2.x it deinitialises the
+                # shared underlying device and breaks any already-running handler
+                # at the same index.
             print("=" * 40 + "\n")
             
             return joysticks
@@ -121,6 +126,7 @@ class JoystickHandler:
         self.button_states: Dict[int, bool] = {}
         self.axis_values: Dict[int, float] = {}
         self.axis_thresholds: Dict[int, float] = {}
+        self.knob_names: Dict[int, str] = {}
         
     def initialize(self) -> bool:
         """
@@ -196,6 +202,38 @@ class JoystickHandler:
         self.axis_values[axis_index] = 0.0
         print(f"Registered axis change callback for axis {axis_index}")
     
+    def register_knob(self, axis_index: int, knob_name: str,
+                       callback_cw: Callable = None,
+                       callback_ccw: Callable = None,
+                       threshold: float = 0.05):
+        """
+        Register an axis as a named rotary knob.
+        Logs CW / CCW direction on every movement and optionally fires
+        direction callbacks (useful for later wiring Ingescape outputs).
+
+        Args:
+            axis_index:   Axis number on the device.
+            knob_name:    Human-readable label shown in log output.
+            callback_cw:  Called (no args) when the knob is turned clockwise.
+            callback_ccw: Called (no args) when the knob is turned counter-clockwise.
+            threshold:    Minimum axis delta to consider a real knob tick (default 0.05).
+        """
+        self.knob_names[axis_index] = knob_name
+        _self = self  # capture for closure
+
+        def _knob_axis_callback(current_value):
+            prev = _self.axis_values.get(axis_index, 0.0)
+            direction = "CW" if current_value > prev else "CCW"
+            print(f"[KNOB] {knob_name} (axis {axis_index}) - {direction}  "
+                  f"(value: {current_value:.3f})")
+            if current_value > prev and callback_cw:
+                callback_cw()
+            elif current_value < prev and callback_ccw:
+                callback_ccw()
+
+        self.register_axis_change(axis_index, _knob_axis_callback, threshold=threshold)
+        print(f"Registered knob '{knob_name}' on axis {axis_index}")
+
     def register_hat_change(self, hat_index: int, callback: Callable[[tuple], None]):
         """
         Register a callback for when a hat (D-pad) changes position.
@@ -215,7 +253,9 @@ class JoystickHandler:
         while self.is_running:
             try:
                 # Process pygame events to update joystick state
-                pygame.event.pump()
+                # Lock prevents simultaneous pump() calls from multiple handler threads
+                with _pygame_lock:
+                    pygame.event.pump()
                 
                 self.poll_count += 1
                 
