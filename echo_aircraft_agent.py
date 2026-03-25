@@ -102,6 +102,9 @@ class Echo(metaclass=Singleton):
         self.yoke_hide_o = None
         self.autopilot_airspeed_o = None
         self.com_1_freq_o = None
+        self.elevator_trim_o = None
+        self.aileron_trim_o = None
+        self.fd_pitch_deg_o = None
 
     @property
     def airspeed_o(self):
@@ -810,6 +813,39 @@ class Echo(metaclass=Singleton):
         self._com_1_freq_o = value
         if self._com_1_freq_o is not None:
             igs.output_set_int("com_1_freq", self._com_1_freq_o)
+
+    @property
+    def elevator_trim_o(self):
+        return self._elevator_trim_o
+    @elevator_trim_o.setter
+    def elevator_trim_o(self, value):
+        if hasattr(self, '_elevator_trim_o') and self._elevator_trim_o == value:
+            return
+        self._elevator_trim_o = value
+        if self._elevator_trim_o is not None:
+            igs.output_set_double("elevator_trim", self._elevator_trim_o)
+
+    @property
+    def aileron_trim_o(self):
+        return self._aileron_trim_o
+    @aileron_trim_o.setter
+    def aileron_trim_o(self, value):
+        if hasattr(self, '_aileron_trim_o') and self._aileron_trim_o == value:
+            return
+        self._aileron_trim_o = value
+        if self._aileron_trim_o is not None:
+            igs.output_set_double("aileron_trim", self._aileron_trim_o)
+
+    @property
+    def fd_pitch_deg_o(self):
+        return self._fd_pitch_deg_o
+    @fd_pitch_deg_o.setter
+    def fd_pitch_deg_o(self, value):
+        if hasattr(self, '_fd_pitch_deg_o') and self._fd_pitch_deg_o == value:
+            return
+        self._fd_pitch_deg_o = value
+        if self._fd_pitch_deg_o is not None:
+            igs.output_set_double("fd_pitch_deg", self._fd_pitch_deg_o)
 
     # =========================================================================
 
