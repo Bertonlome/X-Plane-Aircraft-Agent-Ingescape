@@ -373,9 +373,12 @@ class JoystickHandler:
         """Cleanup when object is destroyed."""
         self.stop()
         if self.joystick:
-            self.joystick.quit()
-        if pygame:
-            pygame.quit()
+            try:
+                self.joystick.quit()
+            except Exception:
+                pass
+        # Do NOT call pygame.quit() here — it would destroy the mixer and all
+        # other pygame subsystems. Cleanup is handled at the application level.
 
 
 # Example usage

@@ -9,6 +9,7 @@
 
 import sys
 import os
+import traceback
 import ingescape as igs
 from echo_aircraft_agent import *
 import time
@@ -119,7 +120,7 @@ com_1_freq_dref = "sim/cockpit/radios/com1_freq_hz" #11980 is 119.80 MHz, multip
 		a.definition.outputCreate("alti_set_std", IopType.IGS_IMPULSION_T);
 """
 
-refresh_rate = 0.01
+refresh_rate = 0.05  # 20 Hz — gives ingescape's background thread regular GIL access
 port = 5670
 agent_name = "Aircraft"
 device = "Ethernet"
@@ -131,10 +132,13 @@ g1000_mfd_handler = None  # JoystickHandler for Virtual Fly G1000 MFD knobs
 g1000_pfd_handler = None  # JoystickHandler for Virtual Fly G1000 PFD knobs
 reset_time = None  # Track when reset was triggered
 outputs_initialized = False  # Track if outputs have been sent after reset
+last_full_sync = 0.0  # Track last periodic forced resend of all outputs
+FULL_SYNC_INTERVAL = 10.0  # Seconds between forced full output resyncs
 
 def signal_handler(signal_received, frame):
     global is_interrupted, joystick_handler, g1000_mfd_handler, g1000_pfd_handler
     print("\n", signal.strsignal(signal_received), sep="")
+    print("[SHUTDOWN] Signal received - setting is_interrupted = True")
     is_interrupted = True
     # Stop joystick monitoring on exit
     if joystick_handler:
@@ -144,7 +148,22 @@ def signal_handler(signal_received, frame):
     if g1000_pfd_handler:
         g1000_pfd_handler.stop()
 
+# Human-readable names for igs agent event codes
+_IGS_EVENT_NAMES = {
+    1: "PEER_ENTERED",
+    2: "PEER_EXITED",
+    3: "AGENT_ENTERED",
+    4: "AGENT_UPDATED_DEFINITION",
+    5: "AGENT_KNOWS_US",
+    6: "AGENT_WON_T_DIE",
+    7: "AGENT_EXITED",
+    8: "AGENT_UPDATED_MAPPING",
+    9: "AGENT_HIGH_WATER_MARK",
+}
+
 def on_agent_event_callback(event, uuid, name, event_data, my_data):
+    event_name = _IGS_EVENT_NAMES.get(event, f"UNKNOWN({event})")
+    print(f"[INGESCAPE] {event_name} - agent: {name} ({uuid}) - data: {event_data}")
     agent_object = my_data
     assert isinstance(agent_object, Echo)
     # add code here if needed
@@ -375,24 +394,19 @@ def set_control_inputs(name, value):
     except Exception as e:
         print(f"Error setting control input {name}: {e}")
     
-def get_position():
+def get_position(alt, heading):
     try:
         # get position
         with xpc.XPlaneConnect() as client:
             posi = client.getPOSI()
             lat = round(posi[0], 6)  # Latitude
             long = round(posi[1], 6)  # Longitude
-            time.sleep(refresh_rate)
-            alt = get_dref(altitude_dref)  # Altitude
-            alt = round(alt[0], 1)  # Altitude
             pitch = round(posi[3], 2)  # Pitch
             roll = round(posi[4], 2)  # Roll
-            time.sleep(refresh_rate)
-            heading = get_dref(heading_dref)  # Heading
-            heading = round(heading[0], None)  # Heading
+            # alt and heading come from the main get_drefs batch (no extra socket)
     except Exception as e:
         print(f"Error getting position: {e}")
-        pitch, roll, heading, alt, lat, long = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        pitch, roll, lat, long = 0.0, 0.0, 0.0, 0.0
     return pitch, heading, roll, alt, lat, long
 
 # catch SIGINT handler before starting agent
@@ -856,29 +870,9 @@ else:
 # ============= End G1000 ALT Selector Integration =============
 
 
-def send_all_outputs():
-    """Send all current output values to initialize the airplane state."""
-    print("Initializing all outputs...")
-    # Force all outputs to be sent by clearing the cached values and re-assigning
-    # This bypasses the equality check in the setters
-    send_dref(speed_brake_dref, 0)  # Ensure speedbrakes are re-initialized
-    time.sleep(refresh_rate)
-    #send_dref(pitot_heat_dref, 0)  # Ensure pitot heat is re-initialized
-    time.sleep(refresh_rate)
-    send_dref(anti_ice_engine_dref, [0, 0, 0, 0, 0, 0, 0, 0])  # Ensure anti-ice is re-initialized
-    time.sleep(refresh_rate)
-    send_dref(l_windshield_anti_ice_dref, 0)  # Ensure windshield anti-ice is re-initialized
-    time.sleep(refresh_rate)
-    send_dref(r_windshield_anti_ice_dref, 0)  # Ensure windshield anti-ice is re-initialized
-    time.sleep(refresh_rate)
-    send_dref(anti_coll_lights_dref, 0)  # Ensure anti-collision lights are re-initialized
-    time.sleep(refresh_rate)
-    send_dref(exterior_lights_dref, 0)  # Ensure exterior lights are re-initialized
-    time.sleep(refresh_rate)
-    
-    
-    # Store current values
-    output_values = {
+def _collect_output_values():
+    """Return a dict of current cached ingescape output values."""
+    return {
         'airspeed': getattr(agent, '_airspeed_o', None),
         'pitch': getattr(agent, '_pitch_o', None),
         'control_pitch': getattr(agent, '_control_pitch_o', None),
@@ -941,14 +935,15 @@ def send_all_outputs():
         'autopilot_airspeed': getattr(agent, '_autopilot_airspeed_o', None),
         'com_1_freq': getattr(agent, '_com_1_freq_o', None),
     }
-    
-    # Clear all cached values to force setters to send
+
+
+def _push_output_values(output_values):
+    """Clear cached values and re-push them through ingescape setters (no drefs)."""
     for key in output_values.keys():
         private_key = '_' + key + '_o'
         if hasattr(agent, private_key):
             delattr(agent, private_key)
-    
-    # Re-assign all values, which will trigger the setters to send
+
     if output_values['airspeed'] is not None: agent.airspeed_o = output_values['airspeed']
     if output_values['pitch'] is not None: agent.pitch_o = output_values['pitch']
     if output_values['control_pitch'] is not None: agent.control_pitch_o = output_values['control_pitch']
@@ -1010,19 +1005,55 @@ def send_all_outputs():
     if output_values['yoke_hide'] is not None: agent.yoke_hide_o = output_values['yoke_hide']
     if output_values['autopilot_airspeed'] is not None: agent.autopilot_airspeed_o = output_values['autopilot_airspeed']
     if output_values['com_1_freq'] is not None: agent.com_1_freq_o = output_values['com_1_freq']
-    
+
+
+def resync_igs_outputs():
+    """Resync: force-push current cached values back through ingescape only (no drefs)."""
+    _push_output_values(_collect_output_values())
+
+
+def send_all_outputs():
+    """Initialization after reset: send drefs to X-Plane then resync ingescape outputs."""
+    print("Initializing all outputs...")
+    # Reset X-Plane drefs to known state
+    send_dref(speed_brake_dref, 0)
+    time.sleep(refresh_rate)
+    send_dref(anti_ice_engine_dref, [0, 0, 0, 0, 0, 0, 0, 0])
+    time.sleep(refresh_rate)
+    send_dref(l_windshield_anti_ice_dref, 0)
+    time.sleep(refresh_rate)
+    send_dref(r_windshield_anti_ice_dref, 0)
+    time.sleep(refresh_rate)
+    send_dref(anti_coll_lights_dref, 0)
+    time.sleep(refresh_rate)
+    send_dref(exterior_lights_dref, 0)
+    time.sleep(refresh_rate)
+    send_dref(alt_sel_dref, 0)
+    time.sleep(refresh_rate)
+    send_dref(heading_sel_dref, 0)
+    time.sleep(refresh_rate)
+    send_dref(pax_safety_dref, 0)
+    time.sleep(refresh_rate)
+    send_dref(fuel_boost_l_dref, 0)
+    time.sleep(refresh_rate)
+    send_dref(fuel_boost_r_dref, 0)
+
+    # Store current values
+    output_values = _collect_output_values()
+    _push_output_values(output_values)
     print("All outputs initialized.")
 
 def main(BirdStrikeEnabled=True):
     global is_interrupted
     global neverDone, reset_time, outputs_initialized
     global _master_warning_active
+    global last_full_sync
     while not is_interrupted:
         try:
             while not is_interrupted:
                 time.sleep(refresh_rate)
 
-                airspeed, vert_speed, park_brake, mustang_l_throttle, mustang_r_throttle, n1_match_bug, n1_percent, slip, engine_fires, pax_safety, master_warning, master_caution, flight_director, speed_mode, heading_mode, fuel_boost_l, fuel_boost_r, test_knob, autopilot_heading_set, yaw_damper, l_ign_switch, r_ign_switch, l_gen_switch, r_gen_switch, transfer_knob, baro_setting, cabin_altitude, gen_load, pitot_heat, l_windshield_anti_ice, r_windshield_anti_ice, exterior_lights, anti_coll_lights, engine_anti_ice, trim_rudder, alt_sel, heading_sel, l_bottle_arm, r_bottle_arm, yoke_hide, autopilot_airspeed, com_1_freq = get_drefs([ias_dref, verticalSpeed_dref, parkBrake_dref, mustang_l_throttle_dref, mustang_r_throttle_dref, n1_match_bug_dref, n1_percent_dref, slip_dref, engine_fires_dref, pax_safety_dref, master_warning_dref, master_caution_dref, flight_director_dref, speed_mode_dref, heading_mode_dref, fuel_boost_l_dref, fuel_boost_r_dref, test_knob_dref, heading_sel_dref, yaw_damper_dref, l_ign_switch_dref, r_ign_switch_dref, l_gen_switch_dref, r_gen_switch_dref, transfer_knob_dref, baro_setting_dref, cabin_altitude_dref, gen_load_dref, pitot_heat_dref, l_windshield_anti_ice_dref, r_windshield_anti_ice_dref, exterior_lights_dref, anti_coll_lights_dref, anti_ice_engine_dref, trim_rudder_dref, alt_sel_dref, heading_sel_dref, botle_l_arm_dref, botle_r_arm_dref, yoke_hide_dref, autopilot_airspeed_dref, com_1_freq_dref])
+                airspeed, vert_speed, park_brake, mustang_l_throttle, mustang_r_throttle, n1_match_bug, n1_percent, slip, engine_fires, pax_safety, master_warning, master_caution, flight_director, speed_mode, heading_mode, fuel_boost_l, fuel_boost_r, test_knob, autopilot_heading_set, yaw_damper, l_ign_switch, r_ign_switch, l_gen_switch, r_gen_switch, transfer_knob, baro_setting, cabin_altitude, gen_load, pitot_heat, l_windshield_anti_ice, r_windshield_anti_ice, exterior_lights, anti_coll_lights, engine_anti_ice, trim_rudder, alt_sel, heading_sel, l_bottle_arm, r_bottle_arm, yoke_hide, autopilot_airspeed, com_1_freq, altitude_raw, heading_raw = get_drefs([ias_dref, verticalSpeed_dref, parkBrake_dref, mustang_l_throttle_dref, mustang_r_throttle_dref, n1_match_bug_dref, n1_percent_dref, slip_dref, engine_fires_dref, pax_safety_dref, master_warning_dref, master_caution_dref, flight_director_dref, speed_mode_dref, heading_mode_dref, fuel_boost_l_dref, fuel_boost_r_dref, test_knob_dref, heading_sel_dref, yaw_damper_dref, l_ign_switch_dref, r_ign_switch_dref, l_gen_switch_dref, r_gen_switch_dref, transfer_knob_dref, baro_setting_dref, cabin_altitude_dref, gen_load_dref, pitot_heat_dref, l_windshield_anti_ice_dref, r_windshield_anti_ice_dref, exterior_lights_dref, anti_coll_lights_dref, anti_ice_engine_dref, trim_rudder_dref, alt_sel_dref, heading_sel_dref, botle_l_arm_dref, botle_r_arm_dref, yoke_hide_dref, autopilot_airspeed_dref, com_1_freq_dref, altitude_dref, heading_dref])
 
                 agent.airspeed_o = airspeed[0]
                 
@@ -1068,6 +1099,7 @@ def main(BirdStrikeEnabled=True):
                 agent.test_knob_o = int(test_knob[0])
                 agent.autopilot_heading_set_o = int(autopilot_heading_set[0])
                 agent.yaw_damper_o = bool(yaw_damper[0])
+                time.sleep(0)  # yield GIL — let ingescape heartbeat thread run
                 agent.l_ign_switch_o = bool(l_ign_switch[0])
                 agent.r_ign_switch_o = bool(r_ign_switch[0])
                 agent.l_gen_switch_o = int(l_gen_switch[0])
@@ -1091,7 +1123,10 @@ def main(BirdStrikeEnabled=True):
                 agent.r_bottle_arm_o = bool(r_bottle_arm[0])
                 #agent.ptt_o = bool(ptt[0])
                 time.sleep(refresh_rate)
-                pitch, heading, roll, alt, lat, long = get_position()
+                pitch, heading, roll, alt, lat, long = get_position(
+                    alt=round(altitude_raw[0], 1),
+                    heading=round(heading_raw[0])
+                )
                 agent.pitch_o = pitch
                 agent.heading_o = heading
                 agent.roll_o = roll
@@ -1119,9 +1154,24 @@ def main(BirdStrikeEnabled=True):
                         send_all_outputs()
                         outputs_initialized = True
                         reset_time = None  # Clear reset time
-        except Exception as e:
-            print(f"An error occurred: {e}")
+
+                # Periodic full resync every FULL_SYNC_INTERVAL seconds (ingescape only, no drefs)
+                now = time.time()
+                if now - last_full_sync >= FULL_SYNC_INTERVAL:
+                    print("[SYNC] Periodic full output resync")
+                    resync_igs_outputs()
+                    last_full_sync = now
+        except BaseException as e:
+            print(f"[ERROR] An error occurred: {type(e).__name__}: {e}")
+            traceback.print_exc()
+            if isinstance(e, (KeyboardInterrupt, SystemExit)):
+                print("[SHUTDOWN] KeyboardInterrupt/SystemExit caught - stopping agent.")
+                break
             print("Retrying in 3 seconds...")
             time.sleep(3)
+    print("[SHUTDOWN] Main loop exited. is_interrupted =", is_interrupted)
 
 main()
+print("[SHUTDOWN] Stopping ingescape agent...")
+igs.stop()
+print("[SHUTDOWN] Agent stopped.")
