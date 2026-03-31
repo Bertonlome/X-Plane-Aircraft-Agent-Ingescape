@@ -105,6 +105,7 @@ class Echo(metaclass=Singleton):
         self.elevator_trim_o = None
         self.aileron_trim_o = None
         self.fd_pitch_deg_o = None
+        self.paused_o = None
 
     @property
     def airspeed_o(self):
@@ -846,6 +847,17 @@ class Echo(metaclass=Singleton):
         self._fd_pitch_deg_o = value
         if self._fd_pitch_deg_o is not None:
             igs.output_set_double("fd_pitch_deg", self._fd_pitch_deg_o)
+
+    @property
+    def paused_o(self):
+        return self._paused_o
+    @paused_o.setter
+    def paused_o(self, value):
+        if hasattr(self, '_paused_o') and self._paused_o == value:
+            return
+        self._paused_o = value
+        if self._paused_o is not None:
+            igs.output_set_bool("paused", self._paused_o)
 
     # =========================================================================
 

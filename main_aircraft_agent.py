@@ -103,6 +103,8 @@ exterior_lights_dref = "Mustang/cockpit/lighting/taxi_landing" # 0 is off, 1 is 
 anti_coll_lights_dref = "sim/cockpit/electrical/strobe_lights_on" # 0 is off, 1 is on
 load_situation_2_comm = "sim/operation/load_situation_2" 
 load_situation_1_comm = "sim/operation/load_situation_1" 
+pause_toggle_comm = "sim/operation/pause_toggle"
+pause_dref = "sim/time/paused"  # 0 = running, 1 = paused
 botle_r_arm_dref = "Mustang/cockpit/bottle_r_arm_b" # 0 is off, 1 is on
 botle_l_arm_dref = "Mustang/cockpit/bottle_l_arm_b" # 0 is off, 1 is on
 l_cutoff_dref = "Mustang/cockpit/engine/l_cutoff"
@@ -139,6 +141,9 @@ reset_time = None  # Track when reset was triggered
 outputs_initialized = False  # Track if outputs have been sent after reset
 last_full_sync = 0.0  # Track last periodic forced resend of all outputs
 FULL_SYNC_INTERVAL = 10.0  # Seconds between forced full output resyncs
+checklist_check_time = None  # Scheduled time (epoch) to run initial config check after reset
+checklist_active = False      # True while sim is paused waiting for correct initial config
+checklist_last_failures = set()  # Track last printed failures to avoid spamming
 
 def signal_handler(signal_received, frame):
     global is_interrupted, joystick_handler, g1000_mfd_handler, g1000_pfd_handler
@@ -209,6 +214,10 @@ def bool_input_callback(io_type, name, value_type, value, my_data):
         send_dref(botle_r_arm_dref, int(value))
     elif name == "yoke_hide":
         send_dref(yoke_hide_dref, int(value))
+    elif name == "brake":
+        send_dref(parkBrake_dref, 1 if value else 0)
+    elif name == "gear":
+        set_control_inputs("gear", 1 if value else 0)
 
 def double_input_callback(io_type, name, value_type, value, my_data):
     if name == "elevator":
@@ -278,7 +287,7 @@ def int_input_callback(io_type, name, value_type, value, my_data):
         send_dref(com_1_freq_dref, value)
         
 def impulsion_input_callback(io_type, name, value_type, value, my_data):
-    global neverDone, reset_time, outputs_initialized
+    global neverDone, reset_time, outputs_initialized, checklist_check_time, checklist_active
     if name == "reset":
         print("Resetting simulation...")
         neverDone = True
@@ -286,19 +295,9 @@ def impulsion_input_callback(io_type, name, value_type, value, my_data):
         send_comm(load_situation_2_comm)
         reset_time = time.time()  # Record the time of reset
         outputs_initialized = False  # Mark that outputs need to be re-initialized
+        checklist_check_time = reset_time + 8  # Schedule config check 8s after reset
+        checklist_active = False  # Cancel any in-progress checklist
 
-    elif name == "gear":
-        current_val = get_control_inputs()[4]
-        print(f"current val = {current_val}")
-        if current_val == 1: set_control_inputs("gear", 0)
-        else:
-            set_control_inputs("gear", 1)
-        pass
-    elif name == "brake":
-        current_val = get_dref(parkBrake_dref)
-        print(f"current val = {current_val}")
-        if current_val[0] == 1: send_dref(parkBrake_dref, 0)
-        else: send_dref(parkBrake_dref, 1)
     elif name == "clear_m_w":
         send_comm(clear_master_warning_comm)
     elif name == "clear_m_c":
@@ -321,6 +320,8 @@ def impulsion_input_callback(io_type, name, value_type, value, my_data):
         send_comm(vertical_speed_down_comm)
     elif name == "nose_up":
         send_comm(vertical_speed_up_comm)
+    elif name == "pause":
+        send_comm(pause_toggle_comm)
 
 def get_dref(arg, is_double=False):
     try:
@@ -449,8 +450,8 @@ igs.input_create("rudder", igs.DOUBLE_T, None)
 igs.input_create("aileron", igs.DOUBLE_T, None)
 igs.input_create("throttle", igs.DOUBLE_T, None)
 igs.input_create("flaps", igs.DOUBLE_T, None)
-igs.input_create("gear", igs.IMPULSION_T, None)
-igs.input_create("brake", igs.IMPULSION_T, None)
+igs.input_create("gear", igs.BOOL_T, None)  # true = gear down, false = gear up
+igs.input_create("brake", igs.BOOL_T, None)  # true = parking brake on, false = parking brake off
 igs.input_create("l_throttle", igs.DOUBLE_T, None) #-1 = cutoff
 igs.input_create("r_throttle", igs.DOUBLE_T, None) #-1 = cutoff
 igs.input_create("pax_safety", igs.INTEGER_T, None) # 0 is off, 1 is seatbelt 2 is on  
@@ -494,6 +495,7 @@ igs.input_create("r_bottle_arm", igs.BOOL_T, None)  # 0 is off, 1 is on
 igs.input_create("yoke_hide", igs.BOOL_T, None)  # 0 is show, 1 is hide
 igs.input_create("nose_down", igs.IMPULSION_T, None)
 igs.input_create("nose_up", igs.IMPULSION_T, None)
+igs.input_create("pause", igs.IMPULSION_T, None)
 
 igs.output_create("airspeed", igs.DOUBLE_T, None)
 igs.output_create("pitch", igs.DOUBLE_T, None)
@@ -562,6 +564,7 @@ igs.output_create("approve", igs.BOOL_T, None)  # Smart button triple-click
 igs.output_create("yoke_hide", igs.BOOL_T, None)  # 0 is show, 1 is hide
 igs.output_create("autopilot_airspeed", igs.DOUBLE_T, None)  # airspeed set in the autopilot
 igs.output_create("com_1_freq", igs.INTEGER_T, None)  # COM1 frequency in Hz (e.g. 11980 = 119.80 MHz)
+igs.output_create("paused", igs.BOOL_T, None)  # true = sim paused, false = sim running
 
 igs.observe_input("On_Off", bool_input_callback, None)  # Observe On_Off toggle
 igs.observe_input("reset", impulsion_input_callback, None)
@@ -572,8 +575,8 @@ igs.observe_input("rudder", double_input_callback, None)
 igs.observe_input("aileron", double_input_callback, None)
 igs.observe_input("throttle", double_input_callback, None)
 igs.observe_input("flaps", double_input_callback, None)
-igs.observe_input("gear", impulsion_input_callback, None)
-igs.observe_input("brake", impulsion_input_callback, None)
+igs.observe_input("gear", bool_input_callback, None)  # true = gear down, false = gear up
+igs.observe_input("brake", bool_input_callback, None)  # true = parking brake on, false = parking brake off
 igs.observe_input("bird_strike", impulsion_input_callback, None)
 igs.observe_input("l_throttle", double_input_callback, None)
 igs.observe_input("r_throttle", double_input_callback, None)
@@ -612,6 +615,7 @@ igs.observe_input("r_bottle_arm", bool_input_callback, None)  # 0 is off, 1 is o
 igs.observe_input("yoke_hide", bool_input_callback, None)  # 0 is show, 1 is hide
 igs.observe_input("nose_down", impulsion_input_callback, None)
 igs.observe_input("nose_up", impulsion_input_callback, None)
+igs.observe_input("pause", impulsion_input_callback, None)
 
 igs.log_set_console(True)
 igs.log_set_console_level(igs.LOG_INFO)
@@ -927,6 +931,33 @@ else:
 # ============= End G1000 ALT Selector Integration =============
 
 
+def _get_checklist_failures():
+    """Return a set of human-readable strings for each condition not yet met."""
+    checks = [
+        ('l_ign_switch',          getattr(agent, '_l_ign_switch_o', None),          True,  'L ignition ON'),
+        ('r_ign_switch',          getattr(agent, '_r_ign_switch_o', None),          True,  'R ignition ON'),
+        ('l_gen_switch',          getattr(agent, '_l_gen_switch_o', None),          2,     'L generator → ON (2)'),
+        ('r_gen_switch',          getattr(agent, '_r_gen_switch_o', None),          2,     'R generator → ON (2)'),
+        ('pax_safety',            getattr(agent, '_pax_safety_o', None),            0,     'Pax safety → OFF (0)'),
+        ('exterior_lights',       getattr(agent, '_exterior_lights_o', None),       0,     'Exterior lights → OFF (0)'),
+        ('anti_coll_lights',      getattr(agent, '_anti_coll_lights_o', None),      False, 'Anti-collision lights → OFF'),
+        ('pitot_heat',            getattr(agent, '_pitot_heat_o', None),            False, 'Pitot heat → OFF'),
+        ('l_engine_anti_ice',     getattr(agent, '_l_engine_anti_ice_o', None),     False, 'L engine anti-ice → OFF'),
+        ('r_engine_anti_ice',     getattr(agent, '_r_engine_anti_ice_o', None),     False, 'R engine anti-ice → OFF'),
+        ('l_windshield_anti_ice', getattr(agent, '_l_windshield_anti_ice_o', None), False, 'L windshield anti-ice → OFF'),
+        ('r_windshield_anti_ice', getattr(agent, '_r_windshield_anti_ice_o', None), False, 'R windshield anti-ice → OFF'),
+        ('park_brake',            getattr(agent, '_park_brake_o', None),            True,  'Parking brake → ON'),
+        ('control_gear',          getattr(agent, '_control_gear_o', None),          1.0,   'Landing gear → DOWN (1)'),
+        ('control_flaps',         getattr(agent, '_control_flaps_o', None),         0.0,   'Flaps → 0'),
+    ]
+    return {label for _, val, expected, label in checks if val != expected}
+
+
+def _initial_config_ok():
+    """Return True if the sim state matches the required initial configuration."""
+    return len(_get_checklist_failures()) == 0
+
+
 def _collect_output_values():
     """Return a dict of current cached ingescape output values."""
     return {
@@ -994,6 +1025,7 @@ def _collect_output_values():
         'yoke_hide': getattr(agent, '_yoke_hide_o', None),
         'autopilot_airspeed': getattr(agent, '_autopilot_airspeed_o', None),
         'com_1_freq': getattr(agent, '_com_1_freq_o', None),
+        'paused': getattr(agent, '_paused_o', None),
     }
 
 
@@ -1068,6 +1100,7 @@ def _push_output_values(output_values):
     if output_values['yoke_hide'] is not None: agent.yoke_hide_o = output_values['yoke_hide']
     if output_values['autopilot_airspeed'] is not None: agent.autopilot_airspeed_o = output_values['autopilot_airspeed']
     if output_values['com_1_freq'] is not None: agent.com_1_freq_o = output_values['com_1_freq']
+    if output_values['paused'] is not None: agent.paused_o = output_values['paused']
 
 
 def resync_igs_outputs():
@@ -1111,12 +1144,14 @@ def main(BirdStrikeEnabled=True):
     global neverDone, reset_time, outputs_initialized
     global _master_warning_active
     global last_full_sync
+    global checklist_check_time, checklist_active
+    global checklist_last_failures
     while not is_interrupted:
         try:
             while not is_interrupted:
                 time.sleep(refresh_rate)
 
-                airspeed, vert_speed, park_brake, mustang_l_throttle, mustang_r_throttle, n1_match_bug, n1_percent, slip, engine_fires, pax_safety, master_warning, master_caution, flight_director, speed_mode, heading_mode, fuel_boost_l, fuel_boost_r, test_knob, autopilot_heading_set, yaw_damper, l_ign_switch, r_ign_switch, l_gen_switch, r_gen_switch, transfer_knob, baro_setting, cabin_altitude, gen_load, pitot_heat, l_windshield_anti_ice, r_windshield_anti_ice, exterior_lights, anti_coll_lights, engine_anti_ice, trim_rudder, alt_sel, heading_sel, l_bottle_arm, r_bottle_arm, yoke_hide, autopilot_airspeed, com_1_freq, altitude_raw, heading_raw, elevator_trim, aileron_trim, fd_pitch_deg = get_drefs([ias_dref, verticalSpeed_dref, parkBrake_dref, mustang_l_throttle_dref, mustang_r_throttle_dref, n1_match_bug_dref, n1_percent_dref, slip_dref, engine_fires_dref, pax_safety_dref, master_warning_dref, master_caution_dref, flight_director_dref, speed_mode_dref, heading_mode_dref, fuel_boost_l_dref, fuel_boost_r_dref, test_knob_dref, heading_sel_dref, yaw_damper_dref, l_ign_switch_dref, r_ign_switch_dref, l_gen_switch_dref, r_gen_switch_dref, transfer_knob_dref, baro_setting_dref, cabin_altitude_dref, gen_load_dref, pitot_heat_dref, l_windshield_anti_ice_dref, r_windshield_anti_ice_dref, exterior_lights_dref, anti_coll_lights_dref, anti_ice_engine_dref, trim_rudder_dref, alt_sel_dref, heading_sel_dref, botle_l_arm_dref, botle_r_arm_dref, yoke_hide_dref, autopilot_airspeed_dref, com_1_freq_dref, altitude_dref, heading_dref, elevator_trim_dref, aileron_trim_dref, fd_pitch_deg_dref])
+                airspeed, vert_speed, park_brake, mustang_l_throttle, mustang_r_throttle, n1_match_bug, n1_percent, slip, engine_fires, pax_safety, master_warning, master_caution, flight_director, speed_mode, heading_mode, fuel_boost_l, fuel_boost_r, test_knob, autopilot_heading_set, yaw_damper, l_ign_switch, r_ign_switch, l_gen_switch, r_gen_switch, transfer_knob, baro_setting, cabin_altitude, gen_load, pitot_heat, l_windshield_anti_ice, r_windshield_anti_ice, exterior_lights, anti_coll_lights, engine_anti_ice, trim_rudder, alt_sel, heading_sel, l_bottle_arm, r_bottle_arm, yoke_hide, autopilot_airspeed, com_1_freq, altitude_raw, heading_raw, elevator_trim, aileron_trim, fd_pitch_deg, paused = get_drefs([ias_dref, verticalSpeed_dref, parkBrake_dref, mustang_l_throttle_dref, mustang_r_throttle_dref, n1_match_bug_dref, n1_percent_dref, slip_dref, engine_fires_dref, pax_safety_dref, master_warning_dref, master_caution_dref, flight_director_dref, speed_mode_dref, heading_mode_dref, fuel_boost_l_dref, fuel_boost_r_dref, test_knob_dref, heading_sel_dref, yaw_damper_dref, l_ign_switch_dref, r_ign_switch_dref, l_gen_switch_dref, r_gen_switch_dref, transfer_knob_dref, baro_setting_dref, cabin_altitude_dref, gen_load_dref, pitot_heat_dref, l_windshield_anti_ice_dref, r_windshield_anti_ice_dref, exterior_lights_dref, anti_coll_lights_dref, anti_ice_engine_dref, trim_rudder_dref, alt_sel_dref, heading_sel_dref, botle_l_arm_dref, botle_r_arm_dref, yoke_hide_dref, autopilot_airspeed_dref, com_1_freq_dref, altitude_dref, heading_dref, elevator_trim_dref, aileron_trim_dref, fd_pitch_deg_dref, pause_dref])
 
                 agent.airspeed_o = airspeed[0]
                 
@@ -1202,6 +1237,7 @@ def main(BirdStrikeEnabled=True):
                 agent.yoke_hide_o = bool(yoke_hide[0])
                 agent.autopilot_airspeed_o = autopilot_airspeed[0]
                 agent.com_1_freq_o = int(com_1_freq[0])
+                agent.paused_o = bool(paused[0])
 
                 time.sleep(refresh_rate)
                 aileron, elevator, rudder, throttle, gear, flaps, speedbrakes = get_control_inputs()
@@ -1212,7 +1248,37 @@ def main(BirdStrikeEnabled=True):
                 agent.control_gear_o = gear
                 agent.control_flaps_o = flaps
                 agent.control_speedbrakes_o = speedbrakes
-                
+
+                # --- Initial configuration checklist ---
+                now_cl = time.time()
+                if checklist_check_time is not None and now_cl >= checklist_check_time:
+                    checklist_check_time = None
+                    failures = _get_checklist_failures()
+                    if failures:
+                        print("[CHECKLIST] Initial config not matching required state - pausing sim")
+                        for f in sorted(failures):
+                            print(f"  ✗ {f}")
+                        checklist_last_failures = failures
+                        send_comm(pause_toggle_comm)
+                        checklist_active = True
+                    else:
+                        print("[CHECKLIST] Initial config OK - no pause needed")
+                if checklist_active:
+                    failures = _get_checklist_failures()
+                    if failures != checklist_last_failures:
+                        fixed = checklist_last_failures - failures
+                        new_fails = failures - checklist_last_failures
+                        for f in sorted(fixed):
+                            print(f"  ✓ {f}")
+                        for f in sorted(new_fails):
+                            print(f"  ✗ {f}")
+                        checklist_last_failures = failures
+                    if not failures:
+                        print("[CHECKLIST] Required config reached - resuming sim")
+                        send_comm(pause_toggle_comm)
+                        checklist_active = False
+                        checklist_last_failures = set()
+
                 # Check if 2 seconds have passed since reset and outputs need initialization
                 if reset_time is not None and not outputs_initialized:
                     elapsed_time = time.time() - reset_time
