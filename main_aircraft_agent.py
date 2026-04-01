@@ -16,6 +16,8 @@ import time
 import xpc
 import signal
 import threading
+import tkinter as tk
+import queue as _queue_module
 from collections import Counter
 from joystick_handler import JoystickHandler
 
@@ -144,6 +146,7 @@ FULL_SYNC_INTERVAL = 10.0  # Seconds between forced full output resyncs
 checklist_check_time = None  # Scheduled time (epoch) to run initial config check after reset
 checklist_active = False      # True while sim is paused waiting for correct initial config
 checklist_last_failures = set()  # Track last printed failures to avoid spamming
+_checklist_queue = _queue_module.Queue()  # Thread-safe channel → ChecklistWindow
 
 def signal_handler(signal_received, frame):
     global is_interrupted, joystick_handler, g1000_mfd_handler, g1000_pfd_handler
@@ -931,8 +934,108 @@ else:
 # ============= End G1000 ALT Selector Integration =============
 
 
+class ChecklistWindow:
+    """Small borderless always-on-top overlay (top-left of monitor 1) that lists
+    aircraft configuration items that do not yet match the required initial state.
+    Communicate with it exclusively via _checklist_queue:
+      {"type": "show",  "failures": set_of_label_strings}
+      {"type": "hide"}
+      {"type": "quit"}
+    """
+    _BG         = "#12121e"
+    _BG_HEADER  = "#1e1e3a"
+    _FG_TITLE   = "#c8c8ff"
+    _FG_FAIL    = "#ff5533"
+    _FG_OK      = "#33ff99"
+    _FONT       = ("Consolas", 9)
+    _FONT_BOLD  = ("Consolas", 9, "bold")
+
+    def __init__(self):
+        self.root = tk.Tk()
+        self.root.title("CONFIG CHECK")
+        self.root.geometry("+5+5")           # Top-left of monitor 1
+        self.root.attributes("-topmost", True)
+        self.root.configure(bg=self._BG)
+        self.root.resizable(False, False)
+        self.root.overrideredirect(True)      # Borderless
+        self.root.withdraw()                  # Hidden until first failure appears
+
+        # ── Drag support ─────────────────────────────────────────────────────
+        self._drag_x = self._drag_y = 0
+
+        # ── Header bar ───────────────────────────────────────────────────────
+        header = tk.Frame(self.root, bg=self._BG_HEADER, cursor="fleur")
+        header.pack(fill="x")
+        tk.Label(
+            header, text="  ⚠  CONFIG CHECK",
+            bg=self._BG_HEADER, fg=self._FG_TITLE,
+            font=self._FONT_BOLD, anchor="w"
+        ).pack(side="left", pady=3, padx=4)
+        tk.Button(
+            header, text="×",
+            bg=self._BG_HEADER, fg="#666688", relief="flat",
+            font=("Consolas", 11, "bold"),
+            command=self.root.withdraw,
+            activebackground="#ff4444", activeforeground="#fff",
+            bd=0, padx=6
+        ).pack(side="right")
+        header.bind("<ButtonPress-1>", self._start_drag)
+        header.bind("<B1-Motion>",     self._do_drag)
+
+        # ── Content ───────────────────────────────────────────────────────────
+        content = tk.Frame(self.root, bg=self._BG, padx=10, pady=6)
+        content.pack(fill="both", expand=True)
+        self._body = tk.Label(
+            content, text="",
+            bg=self._BG, fg=self._FG_FAIL,
+            font=self._FONT, justify="left", anchor="w"
+        )
+        self._body.pack(fill="x")
+
+        self._separator = tk.Frame(self.root, bg="#2a2a4e", height=1)
+        self._separator.pack(fill="x", side="bottom")
+
+        self._poll()
+
+    # ── Drag ─────────────────────────────────────────────────────────────────
+    def _start_drag(self, event):
+        self._drag_x = event.x_root - self.root.winfo_x()
+        self._drag_y = event.y_root - self.root.winfo_y()
+
+    def _do_drag(self, event):
+        self.root.geometry(f"+{event.x_root - self._drag_x}+{event.y_root - self._drag_y}")
+
+    # ── Queue polling ────────────────────────────────────────────────────────
+    def _poll(self):
+        try:
+            while True:
+                msg = _checklist_queue.get_nowait()
+                t = msg.get("type")
+                if t == "show":
+                    self._render(msg["failures"])
+                    self.root.deiconify()
+                elif t == "hide":
+                    self.root.withdraw()
+                elif t == "quit":
+                    self.root.quit()
+                    return
+        except _queue_module.Empty:
+            pass
+        self.root.after(150, self._poll)
+
+    # ── Rendering ────────────────────────────────────────────────────────────
+    def _render(self, failures):
+        if not failures:
+            self._body.config(text="✓  All systems nominal", fg=self._FG_OK)
+        else:
+            lines = "\n".join(f"✗  {f}" for f in sorted(failures))
+            self._body.config(text=lines, fg=self._FG_FAIL)
+
+    def run(self):
+        self.root.mainloop()
+
+
 def _get_checklist_failures():
-    """Return a set of human-readable strings for each condition not yet met."""
     checks = [
         ('l_ign_switch',          getattr(agent, '_l_ign_switch_o', None),          True,  'L ignition ON'),
         ('r_ign_switch',          getattr(agent, '_r_ign_switch_o', None),          True,  'R ignition ON'),
@@ -1255,10 +1358,8 @@ def main(BirdStrikeEnabled=True):
                     checklist_check_time = None
                     failures = _get_checklist_failures()
                     if failures:
-                        print("[CHECKLIST] Initial config not matching required state - pausing sim")
-                        for f in sorted(failures):
-                            print(f"  ✗ {f}")
                         checklist_last_failures = failures
+                        _checklist_queue.put({"type": "show", "failures": failures})
                         send_comm(pause_toggle_comm)
                         checklist_active = True
                     else:
@@ -1266,15 +1367,10 @@ def main(BirdStrikeEnabled=True):
                 if checklist_active:
                     failures = _get_checklist_failures()
                     if failures != checklist_last_failures:
-                        fixed = checklist_last_failures - failures
-                        new_fails = failures - checklist_last_failures
-                        for f in sorted(fixed):
-                            print(f"  ✓ {f}")
-                        for f in sorted(new_fails):
-                            print(f"  ✗ {f}")
                         checklist_last_failures = failures
+                        _checklist_queue.put({"type": "show", "failures": failures})
                     if not failures:
-                        print("[CHECKLIST] Required config reached - resuming sim")
+                        _checklist_queue.put({"type": "hide"})
                         send_comm(pause_toggle_comm)
                         checklist_active = False
                         checklist_last_failures = set()
@@ -1302,8 +1398,13 @@ def main(BirdStrikeEnabled=True):
             print("Retrying in 3 seconds...")
             time.sleep(3)
     print("[SHUTDOWN] Main loop exited. is_interrupted =", is_interrupted)
+    _checklist_queue.put({"type": "quit"})
 
-main()
+_checklist_win = ChecklistWindow()
+_main_thread = threading.Thread(target=main, daemon=True, name="aircraft-main")
+_main_thread.start()
+_checklist_win.run()   # Blocks the main thread in the tkinter event loop
+_main_thread.join(timeout=3)
 print("[SHUTDOWN] Stopping ingescape agent...")
 igs.stop()
 print("[SHUTDOWN] Agent stopped.")
