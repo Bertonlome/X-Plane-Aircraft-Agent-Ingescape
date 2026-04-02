@@ -9,12 +9,15 @@
 
 import sys
 import os
+import traceback
 import ingescape as igs
 from echo_aircraft_agent import *
 import time
 import xpc
 import signal
 import threading
+import tkinter as tk
+import queue as _queue_module
 from collections import Counter
 from joystick_handler import JoystickHandler
 
@@ -62,6 +65,9 @@ pax_safety_dref = "Mustang/cockpit/pax_safety" # 0 is off, 1 is seatbelt 2 is on
 trim_rudder_dref = "sim/cockpit2/controls/rudder_trim"
 elevator_trim_dref = "sim/cockpit2/controls/elevator_trim"
 aileron_trim_dref = "sim/cockpit2/controls/aileron_trim"
+fd_pitch_deg_dref = "sim/cockpit2/autopilot/sync_hold_pitch_deg"
+clear_master_warning_comm = "sim/annunciator/clear_master_warning"
+clear_master_caution_comm = "sim/annunciator/clear_master_caution"
 master_warning_dref = "Mustang/master_warning" #readonly 0 is off, 1 is on
 master_caution_dref = "Mustang/master_caution" #readonly 0 is off, 1 is on
 flight_director_dref = "sim/cockpit2/autopilot/flight_director_mode" 
@@ -98,9 +104,9 @@ r_windshield_anti_ice_dref = "Mustang/cockpit/ai/r_windsheild" # 0 is off, 1 is 
 exterior_lights_dref = "Mustang/cockpit/lighting/taxi_landing" # 0 is off, 1 is taxi, 2 is landing
 anti_coll_lights_dref = "sim/cockpit/electrical/strobe_lights_on" # 0 is off, 1 is on
 load_situation_2_comm = "sim/operation/load_situation_2" 
-load_situation_1_comm = "sim/operation/load_situation_1"
-clear_master_caution_comm = "sim/annunciator/clear_master_caution"
-clear_master_warning_comm = "sim/annunciator/clear_master_warning"
+load_situation_1_comm = "sim/operation/load_situation_1" 
+pause_toggle_comm = "sim/operation/pause_toggle"
+pause_dref = "sim/time/paused"  # 0 = running, 1 = paused
 botle_r_arm_dref = "Mustang/cockpit/bottle_r_arm_b" # 0 is off, 1 is on
 botle_l_arm_dref = "Mustang/cockpit/bottle_l_arm_b" # 0 is off, 1 is on
 l_cutoff_dref = "Mustang/cockpit/engine/l_cutoff"
@@ -108,7 +114,7 @@ r_cutoff_dref = "Mustang/cockpit/engine/r_cutoff"
 yoke_hide_dref = "Mustang/cockpit/yoke_hide" # 0 is show, 1 is hide
 speed_brake_dref = "sim/cockpit2/controls/speedbrake_ratio"
 autopilot_airspeed_dref = "sim/cockpit/autopilot/airspeed" # airspeed set in the autopilot
-fd_pitch_deg_dref = "sim/cockpit2/autopilot/sync_hold_pitch_deg"
+com_1_freq_dref = "sim/cockpit/radios/com1_freq_hz" #11980 is 119.80 MHz, multiply by 100 to get the value in Hz that X-Plane uses
 
 """
 		a.observeInput("alarm", agentCB);
@@ -123,26 +129,54 @@ fd_pitch_deg_dref = "sim/cockpit2/autopilot/sync_hold_pitch_deg"
 		a.definition.outputCreate("alti_set_std", IopType.IGS_IMPULSION_T);
 """
 
-refresh_rate = 0.01
+refresh_rate = 0.05  # 20 Hz — gives ingescape's background thread regular GIL access
 port = 5670
 agent_name = "Aircraft"
-device = "A7500_NETGEAR"
+device = "Ethernet"  # Will be overridden by the startup fallback logic below
 verbose = False
 is_interrupted = False
 start_heading = None
-joystick_handler = None  # Global joystick handler instance
+joystick_handler = None  # Global joystick handler instance (primary yoke/stick)
+g1000_mfd_handler = None  # JoystickHandler for Virtual Fly G1000 MFD knobs
+g1000_pfd_handler = None  # JoystickHandler for Virtual Fly G1000 PFD knobs
 reset_time = None  # Track when reset was triggered
 outputs_initialized = False  # Track if outputs have been sent after reset
+last_full_sync = 0.0  # Track last periodic forced resend of all outputs
+FULL_SYNC_INTERVAL = 10.0  # Seconds between forced full output resyncs
+checklist_check_time = None  # Scheduled time (epoch) to run initial config check after reset
+checklist_active = False      # True while sim is paused waiting for correct initial config
+checklist_last_failures = set()  # Track last printed failures to avoid spamming
+_checklist_queue = _queue_module.Queue()  # Thread-safe channel → ChecklistWindow
 
 def signal_handler(signal_received, frame):
-    global is_interrupted, joystick_handler
+    global is_interrupted, joystick_handler, g1000_mfd_handler, g1000_pfd_handler
     print("\n", signal.strsignal(signal_received), sep="")
+    print("[SHUTDOWN] Signal received - setting is_interrupted = True")
     is_interrupted = True
     # Stop joystick monitoring on exit
     if joystick_handler:
         joystick_handler.stop()
+    if g1000_mfd_handler:
+        g1000_mfd_handler.stop()
+    if g1000_pfd_handler:
+        g1000_pfd_handler.stop()
+
+# Human-readable names for igs agent event codes
+_IGS_EVENT_NAMES = {
+    1: "PEER_ENTERED",
+    2: "PEER_EXITED",
+    3: "AGENT_ENTERED",
+    4: "AGENT_UPDATED_DEFINITION",
+    5: "AGENT_KNOWS_US",
+    6: "AGENT_WON_T_DIE",
+    7: "AGENT_EXITED",
+    8: "AGENT_UPDATED_MAPPING",
+    9: "AGENT_HIGH_WATER_MARK",
+}
 
 def on_agent_event_callback(event, uuid, name, event_data, my_data):
+    event_name = _IGS_EVENT_NAMES.get(event, f"UNKNOWN({event})")
+    print(f"[INGESCAPE] {event_name} - agent: {name} ({uuid}) - data: {event_data}")
     agent_object = my_data
     assert isinstance(agent_object, Echo)
     # add code here if needed
@@ -180,9 +214,9 @@ def bool_input_callback(io_type, name, value_type, value, my_data):
     elif name == "yoke_hide":
         send_dref(yoke_hide_dref, int(value))
     elif name == "brake":
-        send_dref(parkBrake_dref, int(value))
+        send_dref(parkBrake_dref, 1 if value else 0)
     elif name == "gear":
-        set_control_inputs("gear", int(value))
+        set_control_inputs("gear", 1 if value else 0)
 
 def double_input_callback(io_type, name, value_type, value, my_data):
     if name == "elevator":
@@ -247,13 +281,12 @@ def int_input_callback(io_type, name, value_type, value, my_data):
     elif name == "pax_safety":
         send_dref(pax_safety_dref, int(value))
     elif name == "exterior_lights":
-        if value == 1:
-            send_dref(exterior_lights_dref, 2) # 2 for landing lights in the mustang
-        else:
-            send_dref(exterior_lights_dref, value) # 0 for off in the mustang 
+        send_dref(exterior_lights_dref, value)
+    elif name == "com_1_freq":
+        send_dref(com_1_freq_dref, value)
         
 def impulsion_input_callback(io_type, name, value_type, value, my_data):
-    global neverDone, reset_time, outputs_initialized
+    global neverDone, reset_time, outputs_initialized, checklist_check_time, checklist_active
     if name == "reset":
         print("Resetting simulation...")
         neverDone = True
@@ -261,6 +294,9 @@ def impulsion_input_callback(io_type, name, value_type, value, my_data):
         send_comm(load_situation_2_comm)
         reset_time = time.time()  # Record the time of reset
         outputs_initialized = False  # Mark that outputs need to be re-initialized
+        checklist_check_time = reset_time + 8  # Schedule config check 8s after reset
+        checklist_active = False  # Cancel any in-progress checklist
+
     elif name == "clear_m_w":
         send_comm(clear_master_warning_comm)
     elif name == "clear_m_c":
@@ -287,6 +323,8 @@ def impulsion_input_callback(io_type, name, value_type, value, my_data):
         send_comm(vertical_speed_down_comm)
     elif name == "nose_up":
         send_comm(vertical_speed_up_comm)
+    elif name == "pause":
+        send_comm(pause_toggle_comm)
 
 def get_dref(arg, is_double=False):
     try:
@@ -379,24 +417,19 @@ def set_control_inputs(name, value):
     except Exception as e:
         print(f"Error setting control input {name}: {e}")
     
-def get_position():
+def get_position(alt, heading):
     try:
         # get position
         with xpc.XPlaneConnect() as client:
             posi = client.getPOSI()
             lat = round(posi[0], 6)  # Latitude
             long = round(posi[1], 6)  # Longitude
-            time.sleep(refresh_rate)
-            alt = get_dref(altitude_dref)  # Altitude
-            alt = round(alt[0], 1)  # Altitude
             pitch = round(posi[3], 2)  # Pitch
             roll = round(posi[4], 2)  # Roll
-            time.sleep(refresh_rate)
-            heading = get_dref(heading_dref)  # Heading
-            heading = round(heading[0], None)  # Heading
+            # alt and heading come from the main get_drefs batch (no extra socket)
     except Exception as e:
         print(f"Error getting position: {e}")
-        pitch, roll, heading, alt, lat, long = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+        pitch, roll, lat, long = 0.0, 0.0, 0.0, 0.0
     return pitch, heading, roll, alt, lat, long
 
 # catch SIGINT handler before starting agent
@@ -423,8 +456,8 @@ igs.input_create("rudder", igs.DOUBLE_T, None)
 igs.input_create("aileron", igs.DOUBLE_T, None)
 igs.input_create("throttle", igs.DOUBLE_T, None)
 igs.input_create("flaps", igs.DOUBLE_T, None)
-igs.input_create("gear", igs.BOOL_T, None)
-igs.input_create("brake", igs.BOOL_T, None)
+igs.input_create("gear", igs.BOOL_T, None)  # true = gear down, false = gear up
+igs.input_create("brake", igs.BOOL_T, None)  # true = parking brake on, false = parking brake off
 igs.input_create("l_throttle", igs.DOUBLE_T, None) #-1 = cutoff
 igs.input_create("r_throttle", igs.DOUBLE_T, None) #-1 = cutoff
 igs.input_create("pax_safety", igs.INTEGER_T, None) # 0 is off, 1 is seatbelt 2 is on  
@@ -455,15 +488,20 @@ igs.input_create("l_windshield_anti_ice", igs.BOOL_T, None)  # 0 is off, 1 is on
 igs.input_create("r_windshield_anti_ice", igs.BOOL_T, None)  # 0 is off, 1 is on
 igs.input_create("exterior_lights", igs.INTEGER_T, None)  # 0 is off, 1 is taxi, 2 is landing
 igs.input_create("anti_coll_lights", igs.BOOL_T, None)  # 0 is off, 1 is on
+igs.input_create("com_1_freq", igs.INTEGER_T, None)  # COM1 frequency in Hz (e.g. 11980 = 119.80 MHz)
+igs.input_create("On_Off", igs.BOOL_T, None)  # Toggle to send all outputs
+igs.input_create("clear_m_w", igs.IMPULSION_T, None)
+igs.input_create("clear_m_c", igs.IMPULSION_T, None)
 igs.input_create("trim_rudder", igs.DOUBLE_T, None)
 igs.input_create("elevator_trim", igs.DOUBLE_T, None)
 igs.input_create("aileron_trim", igs.DOUBLE_T, None)
 igs.input_create("fd_pitch_deg", igs.DOUBLE_T, None)
-igs.input_create("l_bottle_arm", igs.IMPULSION_T, None)  # 0 is off, 1 is on
-igs.input_create("r_bottle_arm", igs.IMPULSION_T, None)  # 0 is off, 1 is on
+igs.input_create("l_bottle_arm", igs.BOOL_T, None)  # 0 is off, 1 is on
+igs.input_create("r_bottle_arm", igs.BOOL_T, None)  # 0 is off, 1 is on
 igs.input_create("yoke_hide", igs.BOOL_T, None)  # 0 is show, 1 is hide
 igs.input_create("nose_down", igs.IMPULSION_T, None)
 igs.input_create("nose_up", igs.IMPULSION_T, None)
+igs.input_create("pause", igs.IMPULSION_T, None)
 
 igs.output_create("airspeed", igs.DOUBLE_T, None)
 igs.output_create("pitch", igs.DOUBLE_T, None)
@@ -520,16 +558,19 @@ igs.output_create("anti_coll_lights", igs.BOOL_T, None)  # 0 is off, 1 is on
 igs.output_create("trim_rudder", igs.DOUBLE_T, None)
 igs.output_create("elevator_trim", igs.DOUBLE_T, None)
 igs.output_create("aileron_trim", igs.DOUBLE_T, None)
+igs.output_create("fd_pitch_deg", igs.DOUBLE_T, None)
 igs.output_create("alt_sel", igs.INTEGER_T, None)
 igs.output_create("heading_sel", igs.INTEGER_T, None)
 igs.output_create("l_bottle_arm", igs.BOOL_T, None)  # 0 is off, 1 is on
 igs.output_create("r_bottle_arm", igs.BOOL_T, None)  # 0 is off, 1 is on
 igs.output_create("ptt", igs.BOOL_T, None)  # Push-to-talk button
+igs.output_create("ptt_atc", igs.BOOL_T, None)  # Push-to-talk ATC (button 0)
 igs.output_create("check", igs.IMPULSION_T, None)  # Smart button double-click
 igs.output_create("approve", igs.BOOL_T, None)  # Smart button triple-click
 igs.output_create("yoke_hide", igs.BOOL_T, None)  # 0 is show, 1 is hide
 igs.output_create("autopilot_airspeed", igs.DOUBLE_T, None)  # airspeed set in the autopilot
-igs.output_create("fd_pitch_deg", igs.DOUBLE_T, None)
+igs.output_create("com_1_freq", igs.INTEGER_T, None)  # COM1 frequency in Hz (e.g. 11980 = 119.80 MHz)
+igs.output_create("paused", igs.BOOL_T, None)  # true = sim paused, false = sim running
 
 igs.observe_input("On_Off", bool_input_callback, None)  # Observe On_Off toggle
 igs.observe_input("reset", impulsion_input_callback, None)
@@ -540,8 +581,8 @@ igs.observe_input("rudder", double_input_callback, None)
 igs.observe_input("aileron", double_input_callback, None)
 igs.observe_input("throttle", double_input_callback, None)
 igs.observe_input("flaps", double_input_callback, None)
-igs.observe_input("gear", bool_input_callback, None)
-igs.observe_input("brake", bool_input_callback, None)
+igs.observe_input("gear", bool_input_callback, None)  # true = gear down, false = gear up
+igs.observe_input("brake", bool_input_callback, None)  # true = parking brake on, false = parking brake off
 igs.observe_input("bird_strike", impulsion_input_callback, None)
 igs.observe_input("l_throttle", double_input_callback, None)
 igs.observe_input("r_throttle", double_input_callback, None)
@@ -568,6 +609,7 @@ igs.observe_input("l_windshield_anti_ice", bool_input_callback, None)  # 0 is of
 igs.observe_input("r_windshield_anti_ice", bool_input_callback, None)  # 0 is off, 1 is on
 igs.observe_input("exterior_lights", int_input_callback, None)  # 0 is off, 1 is taxi, 2 is landing
 igs.observe_input("anti_coll_lights", bool_input_callback, None)  # 0 is off, 1 is on
+igs.observe_input("com_1_freq", int_input_callback, None)  # COM1 frequency in Hz
 igs.observe_input("trim_rudder", double_input_callback, None)
 igs.observe_input("elevator_trim", double_input_callback, None)
 igs.observe_input("aileron_trim", double_input_callback, None)
@@ -579,11 +621,35 @@ igs.observe_input("r_bottle_arm", impulsion_input_callback, None)  # 0 is off, 1
 igs.observe_input("yoke_hide", bool_input_callback, None)  # 0 is show, 1 is hide
 igs.observe_input("nose_down", impulsion_input_callback, None)
 igs.observe_input("nose_up", impulsion_input_callback, None)
+igs.observe_input("pause", impulsion_input_callback, None)
 
 igs.log_set_console(True)
 igs.log_set_console_level(igs.LOG_INFO)
 
-igs.start_with_device(device, port)
+_available_devices = igs.net_devices_list()
+print(f"[STARTUP] Available network devices: {_available_devices}")
+_DEVICE_FALLBACK_ORDER = ["Ethernet", "A7500_NETGEAR", "Wi-Fi"]
+# Auto-prepend any available device not already in the list
+for _d in _available_devices:
+    if _d not in _DEVICE_FALLBACK_ORDER and _d != "Loopback Pseudo-Interface 1":
+        _DEVICE_FALLBACK_ORDER.insert(0, _d)
+_started = False
+for _dev in _DEVICE_FALLBACK_ORDER:
+    if _dev not in _available_devices:
+        print(f"[STARTUP] Skipping device '{_dev}' (not present on this machine)")
+        continue
+    _result = igs.start_with_device(_dev, port)
+    if _result == 0:  # IGS_SUCCESS = 0
+        device = _dev
+        print(f"[STARTUP] Agent started on device: {device}")
+        _started = True
+        break
+    else:
+        print(f"[STARTUP] Could not start on device '{_dev}' (code {_result}), trying next...")
+        igs.stop()
+if not _started:
+    print("[STARTUP] ERROR: Could not start agent on any device. Exiting.")
+    sys.exit(1)
 # catch SIGINT handler after starting agent
 signal.signal(signal.SIGINT, signal_handler)
 
@@ -768,9 +834,22 @@ if joystick_handler.initialize():
     
     # Register callbacks for all buttons
     print(f"\nRegistering callbacks for {joy_info['num_buttons']} buttons...")
+    def _ptt_atc_press():
+        if JOYSTICK_VERBOSE:
+            print(f"[JOYSTICK] Button 0 (#0) - PRESSED")
+        igs.output_set_bool("ptt_atc", True)
+    def _ptt_atc_release():
+        if JOYSTICK_VERBOSE:
+            print(f"[JOYSTICK] Button 0 (#0) - RELEASED")
+        igs.output_set_bool("ptt_atc", False)
     for button_num in range(joy_info['num_buttons']):
-        # Use special handler for the smart button (PTT / check / approve)
-        if button_num == smart_button:
+        if button_num == 0:
+            # Button 0 is always PTT-ATC: True on press, False on release
+            print(f"  Button 0 -> PTT-ATC handler (ptt_atc)")
+            joystick_handler.register_button_press(0, _ptt_atc_press)
+            joystick_handler.register_button_release(0, _ptt_atc_release)
+        elif button_num == smart_button:
+            # Use special handler for the smart button (PTT / check / approve)
             print(f"  Button {button_num} -> Smart handler (PTT/check/approve)")
             joystick_handler.register_button_press(button_num, button5_handler.on_press)
             joystick_handler.register_button_release(button_num, button5_handler.on_release)
@@ -793,32 +872,200 @@ if joystick_handler.initialize():
 else:
     print("Joystick not available - continuing without joystick integration.")
     joystick_handler = None
-# ============= End Joystick Integration =============
+
+# ============= G1000 ALT Selector Integration =============
+# Buttons 16-19 on both MFD and PFD reproduce the Garmin G1000 autopilot ALT knob.
+# Native X-Plane behaviour is broken for this aircraft, so we read/write alt_sel_dref
+# directly.  alt_sel_dref is stored in units of ×100 ft (10 000 ft → dref value 100).
+#   Button 19 = ALT inner ring UP   (+100 ft)
+#   Button 18 = ALT inner ring DOWN (-100 ft)
+#   Button 17 = ALT outer ring UP   (+1000 ft)
+#   Button 16 = ALT outer ring DOWN (-1000 ft)
+
+_ALT_KNOB_BUTTONS = {
+    19: ("ALT inner UP",    +100),
+    18: ("ALT inner DOWN",  -100),
+    17: ("ALT outer UP",   +1000),
+    16: ("ALT outer DOWN", -1000),
+}
+
+def _alt_sel_adjust(delta_ft: int):
+    """Read current autopilot altitude, add delta_ft, clamp, and write back."""
+    current = get_dref(alt_sel_dref)
+    current_ft = round(current[0] * 100)          # ×100 ft → ft
+    new_ft = max(0, min(45000, current_ft + delta_ft))
+    send_dref(alt_sel_dref, new_ft / 100)
+    igs.output_set_integer("alt_sel", new_ft)
+    print(f"[ALT SEL] {current_ft} ft → {new_ft} ft (Δ{delta_ft:+d} ft)")
+
+def _make_alt_knob_handler(panel: str, btn: int):
+    label, delta = _ALT_KNOB_BUTTONS[btn]
+    def handler():
+        print(f"[G1000 {panel}] {label} (#{btn})")
+        _alt_sel_adjust(delta)
+    return handler
+
+mfd_index = JoystickHandler.find_joystick_by_name("G1000 MFD", occurrence=0)
+if mfd_index is not None:
+    g1000_mfd_handler = JoystickHandler(joystick_index=mfd_index, polling_rate=0.02, debug=False)
+    if g1000_mfd_handler.initialize():
+        for btn in _ALT_KNOB_BUTTONS:
+            g1000_mfd_handler.register_button_press(btn, _make_alt_knob_handler("MFD", btn))
+        g1000_mfd_handler.start()
+        print("G1000 MFD ALT knob active (buttons 16-19).")
+    else:
+        print("G1000 MFD found but failed to initialize.")
+        g1000_mfd_handler = None
+else:
+    print("Virtual Fly G1000 MFD not found - skipping MFD integration.")
+
+# Use occurrence=1 to skip "G1000 PFD2" (occurrence 0) and land on "G1000 PFD"
+pfd_index = JoystickHandler.find_joystick_by_name("G1000 PFD", occurrence=1)
+if pfd_index is not None:
+    g1000_pfd_handler = JoystickHandler(joystick_index=pfd_index, polling_rate=0.02, debug=False)
+    if g1000_pfd_handler.initialize():
+        for btn in _ALT_KNOB_BUTTONS:
+            g1000_pfd_handler.register_button_press(btn, _make_alt_knob_handler("PFD", btn))
+        g1000_pfd_handler.start()
+        print("G1000 PFD ALT knob active (buttons 16-19).")
+    else:
+        print("G1000 PFD found but failed to initialize.")
+        g1000_pfd_handler = None
+else:
+    print("Virtual Fly G1000 PFD not found - skipping PFD integration.")
+# ============= End G1000 ALT Selector Integration =============
 
 
-def send_all_outputs():
-    """Send all current output values to initialize the airplane state."""
-    print("Initializing all outputs...")
-    # Force all outputs to be sent by clearing the cached values and re-assigning
-    # This bypasses the equality check in the setters
-    send_dref(speed_brake_dref, 0)  # Ensure speedbrakes are re-initialized
-    time.sleep(refresh_rate)
-    #send_dref(pitot_heat_dref, 0)  # Ensure pitot heat is re-initialized
-    time.sleep(refresh_rate)
-    send_dref(anti_ice_engine_dref, [0, 0, 0, 0, 0, 0, 0, 0])  # Ensure anti-ice is re-initialized
-    time.sleep(refresh_rate)
-    send_dref(l_windshield_anti_ice_dref, 0)  # Ensure windshield anti-ice is re-initialized
-    time.sleep(refresh_rate)
-    send_dref(r_windshield_anti_ice_dref, 0)  # Ensure windshield anti-ice is re-initialized
-    time.sleep(refresh_rate)
-    send_dref(anti_coll_lights_dref, 0)  # Ensure anti-collision lights are re-initialized
-    time.sleep(refresh_rate)
-    send_dref(exterior_lights_dref, 0)  # Ensure exterior lights are re-initialized
-    time.sleep(refresh_rate)
-    
-    
-    # Store current values
-    output_values = {
+class ChecklistWindow:
+    """Small borderless always-on-top overlay (top-left of monitor 1) that lists
+    aircraft configuration items that do not yet match the required initial state.
+    Communicate with it exclusively via _checklist_queue:
+      {"type": "show",  "failures": set_of_label_strings}
+      {"type": "hide"}
+      {"type": "quit"}
+    """
+    _BG         = "#12121e"
+    _BG_HEADER  = "#1e1e3a"
+    _FG_TITLE   = "#c8c8ff"
+    _FG_FAIL    = "#ff5533"
+    _FG_OK      = "#33ff99"
+    _FONT       = ("Consolas", 9)
+    _FONT_BOLD  = ("Consolas", 9, "bold")
+
+    def __init__(self):
+        self.root = tk.Tk()
+        self.root.title("CONFIG CHECK")
+        self.root.geometry("+5+5")           # Top-left of monitor 1
+        self.root.attributes("-topmost", True)
+        self.root.configure(bg=self._BG)
+        self.root.resizable(False, False)
+        self.root.overrideredirect(True)      # Borderless
+        self.root.withdraw()                  # Hidden until first failure appears
+
+        # ── Drag support ─────────────────────────────────────────────────────
+        self._drag_x = self._drag_y = 0
+
+        # ── Header bar ───────────────────────────────────────────────────────
+        header = tk.Frame(self.root, bg=self._BG_HEADER, cursor="fleur")
+        header.pack(fill="x")
+        tk.Label(
+            header, text="  ⚠  CONFIG CHECK",
+            bg=self._BG_HEADER, fg=self._FG_TITLE,
+            font=self._FONT_BOLD, anchor="w"
+        ).pack(side="left", pady=3, padx=4)
+        tk.Button(
+            header, text="×",
+            bg=self._BG_HEADER, fg="#666688", relief="flat",
+            font=("Consolas", 11, "bold"),
+            command=self.root.withdraw,
+            activebackground="#ff4444", activeforeground="#fff",
+            bd=0, padx=6
+        ).pack(side="right")
+        header.bind("<ButtonPress-1>", self._start_drag)
+        header.bind("<B1-Motion>",     self._do_drag)
+
+        # ── Content ───────────────────────────────────────────────────────────
+        content = tk.Frame(self.root, bg=self._BG, padx=10, pady=6)
+        content.pack(fill="both", expand=True)
+        self._body = tk.Label(
+            content, text="",
+            bg=self._BG, fg=self._FG_FAIL,
+            font=self._FONT, justify="left", anchor="w"
+        )
+        self._body.pack(fill="x")
+
+        self._separator = tk.Frame(self.root, bg="#2a2a4e", height=1)
+        self._separator.pack(fill="x", side="bottom")
+
+        self._poll()
+
+    # ── Drag ─────────────────────────────────────────────────────────────────
+    def _start_drag(self, event):
+        self._drag_x = event.x_root - self.root.winfo_x()
+        self._drag_y = event.y_root - self.root.winfo_y()
+
+    def _do_drag(self, event):
+        self.root.geometry(f"+{event.x_root - self._drag_x}+{event.y_root - self._drag_y}")
+
+    # ── Queue polling ────────────────────────────────────────────────────────
+    def _poll(self):
+        try:
+            while True:
+                msg = _checklist_queue.get_nowait()
+                t = msg.get("type")
+                if t == "show":
+                    self._render(msg["failures"])
+                    self.root.deiconify()
+                elif t == "hide":
+                    self.root.withdraw()
+                elif t == "quit":
+                    self.root.quit()
+                    return
+        except _queue_module.Empty:
+            pass
+        self.root.after(150, self._poll)
+
+    # ── Rendering ────────────────────────────────────────────────────────────
+    def _render(self, failures):
+        if not failures:
+            self._body.config(text="✓  All systems nominal", fg=self._FG_OK)
+        else:
+            lines = "\n".join(f"✗  {f}" for f in sorted(failures))
+            self._body.config(text=lines, fg=self._FG_FAIL)
+
+    def run(self):
+        self.root.mainloop()
+
+
+def _get_checklist_failures():
+    checks = [
+        ('l_ign_switch',          getattr(agent, '_l_ign_switch_o', None),          True,  'L ignition ON'),
+        ('r_ign_switch',          getattr(agent, '_r_ign_switch_o', None),          True,  'R ignition ON'),
+        ('l_gen_switch',          getattr(agent, '_l_gen_switch_o', None),          2,     'L generator → ON (2)'),
+        ('r_gen_switch',          getattr(agent, '_r_gen_switch_o', None),          2,     'R generator → ON (2)'),
+        ('pax_safety',            getattr(agent, '_pax_safety_o', None),            0,     'Pax safety → OFF (0)'),
+        ('exterior_lights',       getattr(agent, '_exterior_lights_o', None),       0,     'Exterior lights → OFF (0)'),
+        ('anti_coll_lights',      getattr(agent, '_anti_coll_lights_o', None),      False, 'Anti-collision lights → OFF'),
+        ('pitot_heat',            getattr(agent, '_pitot_heat_o', None),            False, 'Pitot heat → OFF'),
+        ('l_engine_anti_ice',     getattr(agent, '_l_engine_anti_ice_o', None),     False, 'L engine anti-ice → OFF'),
+        ('r_engine_anti_ice',     getattr(agent, '_r_engine_anti_ice_o', None),     False, 'R engine anti-ice → OFF'),
+        ('l_windshield_anti_ice', getattr(agent, '_l_windshield_anti_ice_o', None), False, 'L windshield anti-ice → OFF'),
+        ('r_windshield_anti_ice', getattr(agent, '_r_windshield_anti_ice_o', None), False, 'R windshield anti-ice → OFF'),
+        ('park_brake',            getattr(agent, '_park_brake_o', None),            True,  'Parking brake → ON'),
+        ('control_gear',          getattr(agent, '_control_gear_o', None),          1.0,   'Landing gear → DOWN (1)'),
+        ('control_flaps',         getattr(agent, '_control_flaps_o', None),         0.0,   'Flaps → 0'),
+    ]
+    return {label for _, val, expected, label in checks if val != expected}
+
+
+def _initial_config_ok():
+    """Return True if the sim state matches the required initial configuration."""
+    return len(_get_checklist_failures()) == 0
+
+
+def _collect_output_values():
+    """Return a dict of current cached ingescape output values."""
+    return {
         'airspeed': getattr(agent, '_airspeed_o', None),
         'pitch': getattr(agent, '_pitch_o', None),
         'control_pitch': getattr(agent, '_control_pitch_o', None),
@@ -874,6 +1121,7 @@ def send_all_outputs():
         'trim_rudder': getattr(agent, '_trim_rudder_o', None),
         'elevator_trim': getattr(agent, '_elevator_trim_o', None),
         'aileron_trim': getattr(agent, '_aileron_trim_o', None),
+        'fd_pitch_deg': getattr(agent, '_fd_pitch_deg_o', None),
         'alt_sel': getattr(agent, '_alt_sel_o', None),
         'heading_sel': getattr(agent, '_heading_sel_o', None),
         'l_bottle_arm': getattr(agent, '_l_bottle_arm_o', None),
@@ -881,16 +1129,18 @@ def send_all_outputs():
         'ptt': getattr(agent, '_ptt_o', None),
         'yoke_hide': getattr(agent, '_yoke_hide_o', None),
         'autopilot_airspeed': getattr(agent, '_autopilot_airspeed_o', None),
-        'fd_pitch_deg': getattr(agent, '_fd_pitch_deg_o', None),
+        'com_1_freq': getattr(agent, '_com_1_freq_o', None),
+        'paused': getattr(agent, '_paused_o', None),
     }
-    
-    # Clear all cached values to force setters to send
+
+
+def _push_output_values(output_values):
+    """Clear cached values and re-push them through ingescape setters (no drefs)."""
     for key in output_values.keys():
         private_key = '_' + key + '_o'
         if hasattr(agent, private_key):
             delattr(agent, private_key)
-    
-    # Re-assign all values, which will trigger the setters to send
+
     if output_values['airspeed'] is not None: agent.airspeed_o = output_values['airspeed']
     if output_values['pitch'] is not None: agent.pitch_o = output_values['pitch']
     if output_values['control_pitch'] is not None: agent.control_pitch_o = output_values['control_pitch']
@@ -946,6 +1196,7 @@ def send_all_outputs():
     if output_values['trim_rudder'] is not None: agent.trim_rudder_o = output_values['trim_rudder']
     if output_values['elevator_trim'] is not None: agent.elevator_trim_o = output_values['elevator_trim']
     if output_values['aileron_trim'] is not None: agent.aileron_trim_o = output_values['aileron_trim']
+    if output_values['fd_pitch_deg'] is not None: agent.fd_pitch_deg_o = output_values['fd_pitch_deg']
     if output_values['alt_sel'] is not None: agent.alt_sel_o = output_values['alt_sel']
     if output_values['heading_sel'] is not None: agent.heading_sel_o = output_values['heading_sel']
     if output_values['l_bottle_arm'] is not None: agent.l_bottle_arm_o = output_values['l_bottle_arm']
@@ -953,20 +1204,59 @@ def send_all_outputs():
     if output_values['ptt'] is not None: agent.ptt_o = output_values['ptt']
     if output_values['yoke_hide'] is not None: agent.yoke_hide_o = output_values['yoke_hide']
     if output_values['autopilot_airspeed'] is not None: agent.autopilot_airspeed_o = output_values['autopilot_airspeed']
-    if output_values['fd_pitch_deg'] is not None: agent.fd_pitch_deg_o = output_values['fd_pitch_deg']
-    
+    if output_values['com_1_freq'] is not None: agent.com_1_freq_o = output_values['com_1_freq']
+    if output_values['paused'] is not None: agent.paused_o = output_values['paused']
+
+
+def resync_igs_outputs():
+    """Resync: force-push current cached values back through ingescape only (no drefs)."""
+    _push_output_values(_collect_output_values())
+
+
+def send_all_outputs():
+    """Initialization after reset: send drefs to X-Plane then resync ingescape outputs."""
+    print("Initializing all outputs...")
+    # Reset X-Plane drefs to known state
+    send_dref(speed_brake_dref, 0)
+    time.sleep(refresh_rate)
+    send_dref(anti_ice_engine_dref, [0, 0, 0, 0, 0, 0, 0, 0])
+    time.sleep(refresh_rate)
+    send_dref(l_windshield_anti_ice_dref, 0)
+    time.sleep(refresh_rate)
+    send_dref(r_windshield_anti_ice_dref, 0)
+    time.sleep(refresh_rate)
+    send_dref(anti_coll_lights_dref, 0)
+    time.sleep(refresh_rate)
+    send_dref(exterior_lights_dref, 0)
+    time.sleep(refresh_rate)
+    send_dref(alt_sel_dref, 0)
+    time.sleep(refresh_rate)
+    send_dref(heading_sel_dref, 0)
+    time.sleep(refresh_rate)
+    send_dref(pax_safety_dref, 0)
+    time.sleep(refresh_rate)
+    send_dref(fuel_boost_l_dref, 0)
+    time.sleep(refresh_rate)
+    send_dref(fuel_boost_r_dref, 0)
+
+    # Store current values
+    output_values = _collect_output_values()
+    _push_output_values(output_values)
     print("All outputs initialized.")
 
 def main(BirdStrikeEnabled=True):
     global is_interrupted
     global neverDone, reset_time, outputs_initialized
     global _master_warning_active
+    global last_full_sync
+    global checklist_check_time, checklist_active
+    global checklist_last_failures
     while not is_interrupted:
         try:
             while not is_interrupted:
                 time.sleep(refresh_rate)
 
-                airspeed, vert_speed, park_brake, mustang_l_throttle, mustang_r_throttle, n1_match_bug, n1_percent, slip, engine_fires, pax_safety, master_warning, master_caution, flight_director, speed_mode, heading_mode, fuel_boost_l, fuel_boost_r, test_knob, autopilot_heading_set, yaw_damper, l_ign_switch, r_ign_switch, l_gen_switch, r_gen_switch, transfer_knob, baro_setting, cabin_altitude, gen_load, pitot_heat, l_windshield_anti_ice, r_windshield_anti_ice, exterior_lights, anti_coll_lights, engine_anti_ice, trim_rudder, alt_sel, heading_sel, l_bottle_arm, r_bottle_arm, ptt, yoke_hide, autopilot_airspeed, elevator_trim, aileron_trim, fd_pitch_deg = get_drefs([ias_dref, verticalSpeed_dref, parkBrake_dref, mustang_l_throttle_dref, mustang_r_throttle_dref, n1_match_bug_dref, n1_percent_dref, slip_dref, engine_fires_dref, pax_safety_dref, master_warning_dref, master_caution_dref, flight_director_dref, speed_mode_dref, heading_mode_dref, fuel_boost_l_dref, fuel_boost_r_dref, test_knob_dref, heading_sel_dref, yaw_damper_dref, l_ign_switch_dref, r_ign_switch_dref, l_gen_switch_dref, r_gen_switch_dref, transfer_knob_dref, baro_setting_dref, cabin_altitude_dref, gen_load_dref, pitot_heat_dref, l_windshield_anti_ice_dref, r_windshield_anti_ice_dref, exterior_lights_dref, anti_coll_lights_dref, anti_ice_engine_dref, trim_rudder_dref, alt_sel_dref, heading_sel_dref, botle_l_arm_dref, botle_r_arm_dref, ptt_dref, yoke_hide_dref, autopilot_airspeed_dref, elevator_trim_dref, aileron_trim_dref, fd_pitch_deg_dref])
+                airspeed, vert_speed, park_brake, mustang_l_throttle, mustang_r_throttle, n1_match_bug, n1_percent, slip, engine_fires, pax_safety, master_warning, master_caution, flight_director, speed_mode, heading_mode, fuel_boost_l, fuel_boost_r, test_knob, autopilot_heading_set, yaw_damper, l_ign_switch, r_ign_switch, l_gen_switch, r_gen_switch, transfer_knob, baro_setting, cabin_altitude, gen_load, pitot_heat, l_windshield_anti_ice, r_windshield_anti_ice, exterior_lights, anti_coll_lights, engine_anti_ice, trim_rudder, alt_sel, heading_sel, l_bottle_arm, r_bottle_arm, yoke_hide, autopilot_airspeed, com_1_freq, altitude_raw, heading_raw, elevator_trim, aileron_trim, fd_pitch_deg, paused = get_drefs([ias_dref, verticalSpeed_dref, parkBrake_dref, mustang_l_throttle_dref, mustang_r_throttle_dref, n1_match_bug_dref, n1_percent_dref, slip_dref, engine_fires_dref, pax_safety_dref, master_warning_dref, master_caution_dref, flight_director_dref, speed_mode_dref, heading_mode_dref, fuel_boost_l_dref, fuel_boost_r_dref, test_knob_dref, heading_sel_dref, yaw_damper_dref, l_ign_switch_dref, r_ign_switch_dref, l_gen_switch_dref, r_gen_switch_dref, transfer_knob_dref, baro_setting_dref, cabin_altitude_dref, gen_load_dref, pitot_heat_dref, l_windshield_anti_ice_dref, r_windshield_anti_ice_dref, exterior_lights_dref, anti_coll_lights_dref, anti_ice_engine_dref, trim_rudder_dref, alt_sel_dref, heading_sel_dref, botle_l_arm_dref, botle_r_arm_dref, yoke_hide_dref, autopilot_airspeed_dref, com_1_freq_dref, altitude_dref, heading_dref, elevator_trim_dref, aileron_trim_dref, fd_pitch_deg_dref, pause_dref])
 
                 agent.airspeed_o = airspeed[0]
                 
@@ -1012,6 +1302,7 @@ def main(BirdStrikeEnabled=True):
                 agent.test_knob_o = int(test_knob[0])
                 agent.autopilot_heading_set_o = int(autopilot_heading_set[0])
                 agent.yaw_damper_o = bool(yaw_damper[0])
+                time.sleep(0)  # yield GIL — let ingescape heartbeat thread run
                 agent.l_ign_switch_o = bool(l_ign_switch[0])
                 agent.r_ign_switch_o = bool(r_ign_switch[0])
                 agent.l_gen_switch_o = int(l_gen_switch[0])
@@ -1031,13 +1322,17 @@ def main(BirdStrikeEnabled=True):
                 agent.trim_rudder_o = trim_rudder[0]
                 agent.elevator_trim_o = elevator_trim[0]
                 agent.aileron_trim_o = aileron_trim[0]
+                agent.fd_pitch_deg_o = fd_pitch_deg[0]
                 agent.alt_sel_o = int(alt_sel[0])
                 agent.heading_sel_o = int(heading_sel[0])
                 agent.l_bottle_arm_o = bool(l_bottle_arm[0])
                 agent.r_bottle_arm_o = bool(r_bottle_arm[0])
                 #agent.ptt_o = bool(ptt[0])
                 time.sleep(refresh_rate)
-                pitch, heading, roll, alt, lat, long = get_position()
+                pitch, heading, roll, alt, lat, long = get_position(
+                    alt=round(altitude_raw[0], 1),
+                    heading=round(heading_raw[0])
+                )
                 agent.pitch_o = pitch
                 agent.heading_o = heading
                 agent.roll_o = roll
@@ -1046,7 +1341,8 @@ def main(BirdStrikeEnabled=True):
                 agent.longitude_o = long
                 agent.yoke_hide_o = bool(yoke_hide[0])
                 agent.autopilot_airspeed_o = autopilot_airspeed[0]
-                agent.fd_pitch_deg_o = fd_pitch_deg[0]
+                agent.com_1_freq_o = int(com_1_freq[0])
+                agent.paused_o = bool(paused[0])
 
                 time.sleep(refresh_rate)
                 aileron, elevator, rudder, throttle, gear, flaps, speedbrakes = get_control_inputs()
@@ -1057,7 +1353,30 @@ def main(BirdStrikeEnabled=True):
                 agent.control_gear_o = gear
                 agent.control_flaps_o = flaps
                 agent.control_speedbrakes_o = speedbrakes
-                
+
+                # --- Initial configuration checklist ---
+                now_cl = time.time()
+                if checklist_check_time is not None and now_cl >= checklist_check_time:
+                    checklist_check_time = None
+                    failures = _get_checklist_failures()
+                    if failures:
+                        checklist_last_failures = failures
+                        _checklist_queue.put({"type": "show", "failures": failures})
+                        send_comm(pause_toggle_comm)
+                        checklist_active = True
+                    else:
+                        print("[CHECKLIST] Initial config OK - no pause needed")
+                if checklist_active:
+                    failures = _get_checklist_failures()
+                    if failures != checklist_last_failures:
+                        checklist_last_failures = failures
+                        _checklist_queue.put({"type": "show", "failures": failures})
+                    if not failures:
+                        _checklist_queue.put({"type": "hide"})
+                        send_comm(pause_toggle_comm)
+                        checklist_active = False
+                        checklist_last_failures = set()
+
                 # Check if 2 seconds have passed since reset and outputs need initialization
                 if reset_time is not None and not outputs_initialized:
                     elapsed_time = time.time() - reset_time
@@ -1065,9 +1384,29 @@ def main(BirdStrikeEnabled=True):
                         send_all_outputs()
                         outputs_initialized = True
                         reset_time = None  # Clear reset time
-        except Exception as e:
-            print(f"An error occurred: {e}")
+
+                # Periodic full resync every FULL_SYNC_INTERVAL seconds (ingescape only, no drefs)
+                now = time.time()
+                if now - last_full_sync >= FULL_SYNC_INTERVAL:
+                    print("[SYNC] Periodic full output resync")
+                    resync_igs_outputs()
+                    last_full_sync = now
+        except BaseException as e:
+            print(f"[ERROR] An error occurred: {type(e).__name__}: {e}")
+            traceback.print_exc()
+            if isinstance(e, (KeyboardInterrupt, SystemExit)):
+                print("[SHUTDOWN] KeyboardInterrupt/SystemExit caught - stopping agent.")
+                break
             print("Retrying in 3 seconds...")
             time.sleep(3)
+    print("[SHUTDOWN] Main loop exited. is_interrupted =", is_interrupted)
+    _checklist_queue.put({"type": "quit"})
 
-main()
+_checklist_win = ChecklistWindow()
+_main_thread = threading.Thread(target=main, daemon=True, name="aircraft-main")
+_main_thread.start()
+_checklist_win.run()   # Blocks the main thread in the tkinter event loop
+_main_thread.join(timeout=3)
+print("[SHUTDOWN] Stopping ingescape agent...")
+igs.stop()
+print("[SHUTDOWN] Agent stopped.")

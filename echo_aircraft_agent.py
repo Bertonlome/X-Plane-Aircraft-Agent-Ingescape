@@ -103,7 +103,11 @@ class Echo(metaclass=Singleton):
         self.approve_o = None
         self.yoke_hide_o = None
         self.autopilot_airspeed_o = None
+        self.com_1_freq_o = None
+        self.elevator_trim_o = None
+        self.aileron_trim_o = None
         self.fd_pitch_deg_o = None
+        self.paused_o = None
 
     @property
     def airspeed_o(self):
@@ -825,6 +829,39 @@ class Echo(metaclass=Singleton):
             igs.output_set_double("autopilot_airspeed", self._autopilot_airspeed_o)
 
     @property
+    def com_1_freq_o(self):
+        return self._com_1_freq_o
+    @com_1_freq_o.setter
+    def com_1_freq_o(self, value):
+        if hasattr(self, '_com_1_freq_o') and self._com_1_freq_o == value:
+            return
+        self._com_1_freq_o = value
+        if self._com_1_freq_o is not None:
+            igs.output_set_int("com_1_freq", self._com_1_freq_o)
+
+    @property
+    def elevator_trim_o(self):
+        return self._elevator_trim_o
+    @elevator_trim_o.setter
+    def elevator_trim_o(self, value):
+        if hasattr(self, '_elevator_trim_o') and self._elevator_trim_o == value:
+            return
+        self._elevator_trim_o = value
+        if self._elevator_trim_o is not None:
+            igs.output_set_double("elevator_trim", self._elevator_trim_o)
+
+    @property
+    def aileron_trim_o(self):
+        return self._aileron_trim_o
+    @aileron_trim_o.setter
+    def aileron_trim_o(self, value):
+        if hasattr(self, '_aileron_trim_o') and self._aileron_trim_o == value:
+            return
+        self._aileron_trim_o = value
+        if self._aileron_trim_o is not None:
+            igs.output_set_double("aileron_trim", self._aileron_trim_o)
+
+    @property
     def fd_pitch_deg_o(self):
         return self._fd_pitch_deg_o
     @fd_pitch_deg_o.setter
@@ -834,6 +871,17 @@ class Echo(metaclass=Singleton):
         self._fd_pitch_deg_o = value
         if self._fd_pitch_deg_o is not None:
             igs.output_set_double("fd_pitch_deg", self._fd_pitch_deg_o)
+
+    @property
+    def paused_o(self):
+        return self._paused_o
+    @paused_o.setter
+    def paused_o(self, value):
+        if hasattr(self, '_paused_o') and self._paused_o == value:
+            return
+        self._paused_o = value
+        if self._paused_o is not None:
+            igs.output_set_bool("paused", self._paused_o)
 
     # =========================================================================
 
