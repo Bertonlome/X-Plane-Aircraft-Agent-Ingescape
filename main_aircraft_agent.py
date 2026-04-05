@@ -168,7 +168,7 @@ _IGS_EVENT_NAMES = {
 
 def on_agent_event_callback(event, uuid, name, event_data, my_data):
     event_name = _IGS_EVENT_NAMES.get(event, f"UNKNOWN({event})")
-    print(f"[INGESCAPE] {event_name} - agent: {name} ({uuid}) - data: {event_data}")
+    # print(f"[INGESCAPE] {event_name} - agent: {name} ({uuid}) - data: {event_data}")
     agent_object = my_data
     assert isinstance(agent_object, Echo)
     # add code here if needed
@@ -654,10 +654,15 @@ try:
     click_sound = pygame.mixer.Sound(_sound_path)
     click_sound.set_volume(CLICK_SOUND_VOLUME)
     print(f"Click sound loaded: {_sound_path}")
+    _stt_listening_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sound", "stt_listening.mp3")
+    stt_listening_sound = pygame.mixer.Sound(_stt_listening_path)
+    stt_listening_sound.set_volume(CLICK_SOUND_VOLUME)
+    print(f"STT listening sound loaded: {_stt_listening_path}")
     _alarm_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sound", "fire_alarm_bell.mp3")
     print(f"Fire alarm sound path set: {_alarm_path}")
 except Exception as e:
     click_sound = None
+    stt_listening_sound = None
     _alarm_path = None
     print(f"Warning: could not load sounds: {e}")
 
@@ -743,6 +748,11 @@ class Button5Handler:
         """Activate PTT after button has been held for long_press_threshold."""
         if self.press_start_time is not None:  # Button still held
             print("🎙️  PTT - ACTIVATED (long press detected)")
+            if stt_listening_sound:
+                stt_listening_sound.play()
+                # Wait for the sound to finish before activating PTT signal
+                sound_duration = stt_listening_sound.get_length()
+                time.sleep(sound_duration)
             igs.output_set_bool("ptt", True)
             self.is_ptt_active = True
     
@@ -834,16 +844,16 @@ if joystick_handler.initialize():
             print(f"[JOYSTICK] Button 0 (#0) - RELEASED")
         igs.output_set_bool("ptt_atc", False)
     for button_num in range(joy_info['num_buttons']):
-        if button_num == 0:
-            # Button 0 is always PTT-ATC: True on press, False on release
-            print(f"  Button 0 -> PTT-ATC handler (ptt_atc)")
-            joystick_handler.register_button_press(0, _ptt_atc_press)
-            joystick_handler.register_button_release(0, _ptt_atc_release)
-        elif button_num == smart_button:
+        if button_num == smart_button:
             # Use special handler for the smart button (PTT / check / approve)
             print(f"  Button {button_num} -> Smart handler (PTT/check/approve)")
             joystick_handler.register_button_press(button_num, button5_handler.on_press)
             joystick_handler.register_button_release(button_num, button5_handler.on_release)
+        elif button_num == 0:
+            # Button 0 is PTT-ATC: True on press, False on release (only if not the smart button)
+            print(f"  Button 0 -> PTT-ATC handler (ptt_atc)")
+            joystick_handler.register_button_press(0, _ptt_atc_press)
+            joystick_handler.register_button_release(0, _ptt_atc_release)
         else:
             joystick_handler.register_button_press(button_num, create_button_press_handler(button_num))
             joystick_handler.register_button_release(button_num, create_button_release_handler(button_num))
