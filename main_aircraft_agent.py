@@ -213,6 +213,8 @@ def bool_input_callback(io_type, name, value_type, value, my_data):
         send_dref(anti_coll_lights_dref, int(value))
     elif name == "yoke_hide":
         send_dref(yoke_hide_dref, int(value))
+        if value:
+            send_dref(speed_brake_dref, 0)
     elif name == "brake":
         send_dref(parkBrake_dref, 1 if value else 0)
     elif name == "gear":
@@ -735,7 +737,7 @@ class Button5Handler:
         
         # If PTT was activated, deactivate it on release
         if self.is_ptt_active:
-            print("🎙️  PTT - DEACTIVATED")
+            print("[PTT] DEACTIVATED")
             igs.output_set_bool("ptt", False)
             self.is_ptt_active = False
             return
@@ -757,7 +759,7 @@ class Button5Handler:
     def _activate_ptt(self):
         """Activate PTT after button has been held for long_press_threshold."""
         if self.press_start_time is not None:  # Button still held
-            print("🎙️  PTT - ACTIVATED (long press detected)")
+            print("[PTT] ACTIVATED (long press detected)")
             if stt_listening_sound:
                 stt_listening_sound.play()
                 # Wait for the sound to finish before activating PTT signal
@@ -771,10 +773,10 @@ class Button5Handler:
         click_count = len(self.click_times)
         
         if click_count == 2:
-            print("✓✓ CHECKED (double-click detected)")
+            print("[CHECK] CHECKED (double-click detected)")
             igs.output_set_impulsion("check")
         elif click_count >= 3:
-            print("✓✓✓ APPROVE (triple-click detected)")
+            print("[APPROVE] APPROVE (triple-click detected)")
             igs.output_set_bool("approve", True)
         # Single click - do nothing special
         
@@ -905,8 +907,8 @@ def _alt_sel_adjust(delta_ft: int):
     current_ft = round(current[0] * 100)          # ×100 ft → ft
     new_ft = max(0, min(45000, current_ft + delta_ft))
     send_dref(alt_sel_dref, new_ft / 100)
-    igs.output_set_integer("alt_sel", new_ft)
-    print(f"[ALT SEL] {current_ft} ft → {new_ft} ft (Δ{delta_ft:+d} ft)")
+    igs.output_set_int("alt_sel", new_ft)
+    print(f"[ALT SEL] {current_ft} ft -> {new_ft} ft ({delta_ft:+d} ft)")
 
 def _make_alt_knob_handler(panel: str, btn: int):
     label, delta = _ALT_KNOB_BUTTONS[btn]
@@ -943,6 +945,57 @@ if pfd_index is not None:
         g1000_pfd_handler = None
 else:
     print("Virtual Fly G1000 PFD not found - skipping PFD integration.")
+
+# ============= G1000 Nose-Up / Nose-Down Button Integration =============
+# Reads nose_button_config.json (produced by remap_nose_buttons.py).
+# Each press sends the same X-Plane command as the ingescape nose_up / nose_down inputs:
+#   nose up   → vertical_speed_up_comm   ("sim/autopilot/vertical_speed_up")
+#   nose down → vertical_speed_down_comm ("sim/autopilot/vertical_speed_down")
+
+import json as _json
+
+_NOSE_CFG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "nose_button_config.json")
+
+def _load_nose_config():
+    if not os.path.exists(_NOSE_CFG_PATH):
+        print("[NOSE BTN] nose_button_config.json not found — run remap_nose_buttons.py first.")
+        return None
+    try:
+        with open(_NOSE_CFG_PATH) as _f:
+            cfg = _json.load(_f)
+        required = {"pfd_nose_up_button", "pfd_nose_down_button",
+                    "mfd_nose_up_button", "mfd_nose_down_button"}
+        if not required.issubset(cfg):
+            print("[NOSE BTN] nose_button_config.json is incomplete — re-run remap_nose_buttons.py.")
+            return None
+        return cfg
+    except Exception as _e:
+        print(f"[NOSE BTN] Failed to load nose_button_config.json: {_e}")
+        return None
+
+_nose_cfg = _load_nose_config()
+
+if _nose_cfg is not None:
+    def _make_nose_handler(panel: str, direction: str):
+        comm = vertical_speed_up_comm if direction == "up" else vertical_speed_down_comm
+        label = "NOSE UP" if direction == "up" else "NOSE DOWN"
+        def _handler():
+            print(f"[G1000 {panel}] {label} -> {comm}")
+            send_comm(comm)
+        return _handler
+
+    # Register on MFD handler if it is running
+    if g1000_mfd_handler is not None:
+        g1000_mfd_handler.register_button_press(_nose_cfg["mfd_nose_up_button"],   _make_nose_handler("MFD", "up"))
+        g1000_mfd_handler.register_button_press(_nose_cfg["mfd_nose_down_button"], _make_nose_handler("MFD", "down"))
+        print(f"[NOSE BTN] MFD nose up=#{_nose_cfg['mfd_nose_up_button']}  nose down=#{_nose_cfg['mfd_nose_down_button']} registered.")
+
+    # Register on PFD handler if it is running
+    if g1000_pfd_handler is not None:
+        g1000_pfd_handler.register_button_press(_nose_cfg["pfd_nose_up_button"],   _make_nose_handler("PFD", "up"))
+        g1000_pfd_handler.register_button_press(_nose_cfg["pfd_nose_down_button"], _make_nose_handler("PFD", "down"))
+        print(f"[NOSE BTN] PFD nose up=#{_nose_cfg['pfd_nose_up_button']}  nose down=#{_nose_cfg['pfd_nose_down_button']} registered.")
+
 # ============= End G1000 ALT Selector Integration =============
 
 
@@ -1400,6 +1453,8 @@ def main(BirdStrikeEnabled=True):
                 if now - last_full_sync >= FULL_SYNC_INTERVAL:
                     print("[SYNC] Periodic full output resync")
                     resync_igs_outputs()
+                    if yoke_hide[0] == 0:
+                        send_dref(yoke_hide_dref, 1)
                     last_full_sync = now
         except BaseException as e:
             print(f"[ERROR] An error occurred: {type(e).__name__}: {e}")
