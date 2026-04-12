@@ -107,6 +107,8 @@ class Echo(metaclass=Singleton):
         self.elevator_trim_o = None
         self.aileron_trim_o = None
         self.fd_pitch_deg_o = None
+        self.wind_direction_o = None
+        self.wind_speed_o = None
         self.paused_o = None
 
     @property
@@ -838,6 +840,28 @@ class Echo(metaclass=Singleton):
         self._com_1_freq_o = value
         if self._com_1_freq_o is not None:
             igs.output_set_int("com_1_freq", self._com_1_freq_o)
+
+    @property
+    def wind_direction_o(self):
+        return self._wind_direction_o
+    @wind_direction_o.setter
+    def wind_direction_o(self, value):
+        if hasattr(self, '_wind_direction_o') and self._wind_direction_o == value:
+            return
+        self._wind_direction_o = value
+        if self._wind_direction_o is not None:
+            igs.output_set_double("wind_direction", self._wind_direction_o)
+
+    @property
+    def wind_speed_o(self):
+        return self._wind_speed_o
+    @wind_speed_o.setter
+    def wind_speed_o(self, value):
+        if hasattr(self, '_wind_speed_o') and self._wind_speed_o == value:
+            return
+        self._wind_speed_o = value
+        if self._wind_speed_o is not None:
+            igs.output_set_double("wind_speed", self._wind_speed_o)
 
     @property
     def elevator_trim_o(self):
