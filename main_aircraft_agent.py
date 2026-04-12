@@ -285,9 +285,9 @@ def int_input_callback(io_type, name, value_type, value, my_data):
     elif name == "autopilot_heading_set":
         send_dref(heading_sel_dref, value)
     elif name == "fuel_boost_l":
-        send_dref(fuel_boost_l_dref, value + 1)
+        send_dref(fuel_boost_l_dref, value)
     elif name == "fuel_boost_r":
-        send_dref(fuel_boost_r_dref, value + 1)
+        send_dref(fuel_boost_r_dref, value)
     elif name == "pax_safety":
         send_dref(pax_safety_dref, int(value))
     elif name == "exterior_lights":
@@ -340,14 +340,14 @@ def impulsion_input_callback(io_type, name, value_type, value, my_data):
 def string_input_callback(io_type, name, value_type, value, my_data):
     global neverDone, reset_time, outputs_initialized, checklist_check_time, checklist_active
     if name == "load_situation":
-        if value == "24L":
-            print(f"Loading situation 24L...")
+        if value == "06R":
+            print(f"Loading situation 06R...")
             send_comm(load_situation_1_comm)
+        elif value == "24L":
+            print(f"Loading situation 24L...")
+            send_comm(load_situation_2_comm)
         elif value == "24R":
             print(f"Loading situation 24R...")
-            send_comm(load_situation_2_comm)
-        elif value == "06R":
-            print(f"Loading situation 06R...")
             send_comm(load_situation_3_comm)
         else:
             print(f"Unknown runway designation: {value}")
