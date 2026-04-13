@@ -151,6 +151,7 @@ checklist_check_time = None  # Scheduled time (epoch) to run initial config chec
 checklist_active = False      # True while sim is paused waiting for correct initial config
 checklist_last_failures = set()  # Track last printed failures to avoid spamming
 _checklist_queue = _queue_module.Queue()  # Thread-safe channel → ChecklistWindow
+elite_hrv_entered = False    # True when Elite HRV time has been entered for this session
 
 def signal_handler(signal_received, frame):
     global is_interrupted, joystick_handler, g1000_mfd_handler, g1000_pfd_handler
@@ -296,7 +297,7 @@ def int_input_callback(io_type, name, value_type, value, my_data):
         send_dref(com_1_freq_dref, value)
         
 def impulsion_input_callback(io_type, name, value_type, value, my_data):
-    global neverDone, reset_time, outputs_initialized, checklist_check_time, checklist_active
+    global neverDone, reset_time, outputs_initialized, checklist_check_time, checklist_active, elite_hrv_entered
     if name == "reset":
         print("Resetting simulation...")
         neverDone = True
@@ -306,6 +307,7 @@ def impulsion_input_callback(io_type, name, value_type, value, my_data):
         outputs_initialized = False  # Mark that outputs need to be re-initialized
         checklist_check_time = reset_time + 8  # Schedule config check 8s after reset
         checklist_active = False  # Cancel any in-progress checklist
+        elite_hrv_entered = False  # Reset Elite HRV flag
 
     elif name == "clear_m_w":
         send_comm(clear_master_warning_comm)
@@ -338,8 +340,12 @@ def impulsion_input_callback(io_type, name, value_type, value, my_data):
         send_comm(pause_toggle_comm)
 
 def string_input_callback(io_type, name, value_type, value, my_data):
-    global neverDone, reset_time, outputs_initialized, checklist_check_time, checklist_active
-    if name == "load_situation":
+    global neverDone, reset_time, outputs_initialized, checklist_check_time, checklist_active, elite_hrv_entered
+    if name == "eliteHRV":
+        elite_hrv_entered = True
+        agent.elite_hrv_o = value
+        print(f"[ELITE HRV] Time entered: {value}")
+    elif name == "load_situation":
         if value == "06R":
             print(f"Loading situation 06R...")
             send_comm(load_situation_1_comm)
@@ -360,6 +366,7 @@ def string_input_callback(io_type, name, value_type, value, my_data):
         outputs_initialized = False  # Mark that outputs need to be re-initialized
         checklist_check_time = reset_time + 8  # Schedule config check 8s after load
         checklist_active = False  # Cancel any in-progress checklist
+        elite_hrv_entered = False  # Reset Elite HRV flag
 
 def get_dref(arg, is_double=False):
     try:
@@ -540,6 +547,7 @@ igs.input_create("nose_down", igs.IMPULSION_T, None)
 igs.input_create("nose_up", igs.IMPULSION_T, None)
 igs.input_create("pause", igs.IMPULSION_T, None)
 igs.input_create("load_situation", igs.STRING_T, None)  # runway designation: "24R", "24L", "06R"
+igs.input_create("eliteHRV", igs.STRING_T, None)  # Elite HRV time entry for checklist
 
 igs.output_create("airspeed", igs.DOUBLE_T, None)
 igs.output_create("pitch", igs.DOUBLE_T, None)
@@ -610,6 +618,7 @@ igs.output_create("autopilot_airspeed", igs.DOUBLE_T, None)  # airspeed set in t
 igs.output_create("com_1_freq", igs.INTEGER_T, None)  # COM1 frequency in Hz (e.g. 11980 = 119.80 MHz)
 igs.output_create("wind_direction", igs.DOUBLE_T, None)  # wind direction from 0 to 359 degrees TRUE heading
 igs.output_create("wind_speed", igs.DOUBLE_T, None)  # wind speed in knots
+igs.output_create("eliteHRV", igs.STRING_T, None)  # Elite HRV time recorded
 igs.output_create("paused", igs.BOOL_T, None)  # true = sim paused, false = sim running
 
 igs.observe_input("On_Off", bool_input_callback, None)  # Observe On_Off toggle
@@ -665,6 +674,7 @@ igs.observe_input("nose_down", impulsion_input_callback, None)
 igs.observe_input("nose_up", impulsion_input_callback, None)
 igs.observe_input("pause", impulsion_input_callback, None)
 igs.observe_input("load_situation", string_input_callback, None)
+igs.observe_input("eliteHRV", string_input_callback, None)
 
 igs.log_set_console(True)
 igs.log_set_console_level(igs.LOG_INFO)
@@ -1142,6 +1152,13 @@ class ChecklistWindow:
 
 
 def _get_checklist_failures():
+    failures = set()
+    
+    # ⚠⚠⚠ ELITE HRV CHECK - MUST BE FIRST ⚠⚠⚠
+    if not elite_hrv_entered:
+        failures.add("ENTER ELITE HRV TIME")
+    
+    # Standard aircraft configuration checks
     checks = [
         ('l_ign_switch',          getattr(agent, '_l_ign_switch_o', None),          False,  'L ignition → OFF'),
         ('r_ign_switch',          getattr(agent, '_r_ign_switch_o', None),          False,  'R ignition → OFF'),
@@ -1161,7 +1178,9 @@ def _get_checklist_failures():
         ('l_fuel_boost',          getattr(agent, '_fuel_boost_l_o', None),          0,     'L fuel boost → NORM (0)'),
         ('r_fuel_boost',          getattr(agent, '_fuel_boost_r_o', None),          0,     'R fuel boost → NORM (0)'),
     ]
-    return {label for _, val, expected, label in checks if val != expected}
+    failures.update({label for _, val, expected, label in checks if val != expected})
+    
+    return failures
 
 
 def _initial_config_ok():

@@ -109,6 +109,7 @@ class Echo(metaclass=Singleton):
         self.fd_pitch_deg_o = None
         self.wind_direction_o = None
         self.wind_speed_o = None
+        self.elite_hrv_o = None
         self.paused_o = None
 
     @property
@@ -906,6 +907,16 @@ class Echo(metaclass=Singleton):
         self._paused_o = value
         if self._paused_o is not None:
             igs.output_set_bool("paused", self._paused_o)
+
+    @property
+    def elite_hrv_o(self):
+        return self._elite_hrv_o
+    @elite_hrv_o.setter
+    def elite_hrv_o(self, value):
+        # Transparent pass-through - always send output (no caching)
+        self._elite_hrv_o = value
+        if self._elite_hrv_o is not None:
+            igs.output_set_string("eliteHRV", self._elite_hrv_o)
 
     # =========================================================================
 
