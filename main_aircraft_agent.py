@@ -23,7 +23,7 @@ from joystick_handler import JoystickHandler
 
 # ============= Configuration =============
 JOYSTICK_VERBOSE = True  # Set to True to see detailed joystick button press/release logs
-PTT_LONG_PRESS_TIME = 0.5  # Time in seconds to hold button for PTT activation
+PTT_LONG_PRESS_TIME = 0.3  # Time in seconds to hold button for PTT activation
 CLICK_SOUND_VOLUME = 1.0  # Volume for the click sound (0.0 = silent, 1.0 = full volume)
 # Joystick-specific smart button index (button with PTT/check/approve logic)
 # Yoko+ uses button 5; Extreme 3D Pro uses button 0 (trigger)
@@ -1493,7 +1493,8 @@ def main(BirdStrikeEnabled=True):
                     if failures:
                         checklist_last_failures = failures
                         _checklist_queue.put({"type": "show", "failures": failures})
-                        send_comm(pause_toggle_comm)
+                        if not paused[0]:
+                            send_comm(pause_toggle_comm)
                         checklist_active = True
                     else:
                         print("[CHECKLIST] Initial config OK - no pause needed")
