@@ -152,6 +152,9 @@ checklist_active = False      # True while sim is paused waiting for correct ini
 checklist_last_failures = set()  # Track last printed failures to avoid spamming
 _checklist_queue = _queue_module.Queue()  # Thread-safe channel → ChecklistWindow
 elite_hrv_entered = False    # True when Elite HRV time has been entered for this session
+eye_tracking_running = False  # Track if eye tracking is running
+last_record_progress = 0.0    # Track last record_progress value to detect if it's increasing
+record_progress_stagnant_time = None  # Time when record progress stopped increasing
 
 def signal_handler(signal_received, frame):
     global is_interrupted, joystick_handler, g1000_mfd_handler, g1000_pfd_handler
@@ -192,10 +195,14 @@ def on_freeze_callback(is_frozen, my_data):
     # add code here if needed
 
 def bool_input_callback(io_type, name, value_type, value, my_data):
+    global eye_tracking_running
     if name == "On_Off":
         if value:
             print("On_Off triggered - sending all outputs...")
             send_all_outputs()
+    elif name == "eye_tracking_running":
+        eye_tracking_running = value
+        print(f"[EYE TRACKING] Eye tracking running status: {value}")
     elif name == "yaw_damper":
         send_dref(yaw_damper_dref, value)
     elif name == "l_ign_switch":
@@ -226,7 +233,16 @@ def bool_input_callback(io_type, name, value_type, value, my_data):
         set_control_inputs("gear", 1 if value else 0)
 
 def double_input_callback(io_type, name, value_type, value, my_data):
-    if name == "elevator":
+    global last_record_progress, record_progress_stagnant_time
+    if name == "record_progress":
+        if value > last_record_progress:
+            # Progress is increasing, reset stagnant timer
+            record_progress_stagnant_time = None
+        elif record_progress_stagnant_time is None and last_record_progress > 0:
+            # Progress stopped increasing, start timer
+            record_progress_stagnant_time = time.time()
+        last_record_progress = value
+    elif name == "elevator":
         set_control_inputs("elevator", value)
     elif name == "rudder":
         set_control_inputs("rudder", value)
@@ -298,6 +314,7 @@ def int_input_callback(io_type, name, value_type, value, my_data):
         
 def impulsion_input_callback(io_type, name, value_type, value, my_data):
     global neverDone, reset_time, outputs_initialized, checklist_check_time, checklist_active, elite_hrv_entered
+    global last_record_progress, record_progress_stagnant_time
     if name == "reset":
         print("Resetting simulation...")
         neverDone = True
@@ -308,6 +325,8 @@ def impulsion_input_callback(io_type, name, value_type, value, my_data):
         checklist_check_time = reset_time + 8  # Schedule config check 8s after reset
         checklist_active = False  # Cancel any in-progress checklist
         elite_hrv_entered = False  # Reset Elite HRV flag
+        last_record_progress = 0.0  # Reset record progress tracking
+        record_progress_stagnant_time = None
 
     elif name == "clear_m_w":
         send_comm(clear_master_warning_comm)
@@ -341,6 +360,7 @@ def impulsion_input_callback(io_type, name, value_type, value, my_data):
 
 def string_input_callback(io_type, name, value_type, value, my_data):
     global neverDone, reset_time, outputs_initialized, checklist_check_time, checklist_active, elite_hrv_entered
+    global last_record_progress, record_progress_stagnant_time
     if name == "eliteHRV":
         elite_hrv_entered = True
         agent.elite_hrv_o = value
@@ -548,6 +568,8 @@ igs.input_create("nose_up", igs.IMPULSION_T, None)
 igs.input_create("pause", igs.IMPULSION_T, None)
 igs.input_create("load_situation", igs.STRING_T, None)  # runway designation: "24R", "24L", "06R"
 igs.input_create("eliteHRV", igs.STRING_T, None)  # Elite HRV time entry for checklist
+igs.input_create("record_progress", igs.DOUBLE_T, None)  # Number of seconds since recording began
+igs.input_create("eye_tracking_running", igs.BOOL_T, None)  # Eye tracking status
 
 igs.output_create("airspeed", igs.DOUBLE_T, None)
 igs.output_create("pitch", igs.DOUBLE_T, None)
@@ -675,6 +697,8 @@ igs.observe_input("nose_up", impulsion_input_callback, None)
 igs.observe_input("pause", impulsion_input_callback, None)
 igs.observe_input("load_situation", string_input_callback, None)
 igs.observe_input("eliteHRV", string_input_callback, None)
+igs.observe_input("record_progress", double_input_callback, None)
+igs.observe_input("eye_tracking_running", bool_input_callback, None)
 
 igs.log_set_console(True)
 igs.log_set_console_level(igs.LOG_INFO)
@@ -1152,11 +1176,21 @@ class ChecklistWindow:
 
 
 def _get_checklist_failures():
+    global record_progress_stagnant_time
     failures = set()
     
     # ⚠⚠⚠ ELITE HRV CHECK - MUST BE FIRST ⚠⚠⚠
     if not elite_hrv_entered:
         failures.add("ENTER ELITE HRV TIME")
+    
+    # Eye tracking status check
+    if not eye_tracking_running:
+        failures.add("START EYE TRACKING")
+    
+    # Recording progress check - only flag if stagnant for more than 3 seconds
+    if record_progress_stagnant_time is not None:
+        if time.time() - record_progress_stagnant_time > 3.0:
+            failures.add("RECORDING NOT PROGRESSING")
     
     # Standard aircraft configuration checks
     checks = [
